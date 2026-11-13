@@ -25,8 +25,8 @@
 <div class="demo-bar"><span>Demo with made-up numbers</span><a href="https://github.com/NicholasKruus/productivity-tracker">Code and setup on GitHub</a></div>
 <div id="dash-root">
 <style>
-  /* Look of ai-automations-db.vercel.app: white paper, near-black ink, #007fff accent,
-     heavy uppercase Inter Tight headings, IBM Plex Mono labels, hairline rules. */
+  /* White paper, near-black ink, #007fff accent, heavy uppercase Inter Tight
+     headings, IBM Plex Mono labels, hairline rules. Fonts fall back to the system's. */
   #dash-root { --dash-gutter: 0; }
   .nt {
     --k-ink: #0b0f17; --k-paper: #ffffff; --k-muted: #535a67;
@@ -123,7 +123,7 @@
   <section class="nt-sec" id="published">
     <p class="nt-idx">01 / Published</p>
     <h2>What you published, per week</h2>
-    <p class="nt-why">Each finished public piece counts once, however many platforms it went to, and a short clip counts the same as a long paper. A paler bar is the week so far.</p>
+    <p class="nt-why">Each item in your feeds counts once, and a short clip counts the same as a long paper. A paler bar is the week so far.</p>
     <div class="nt-legend" aria-hidden="true">
       <span class="nt-key"><span class="nt-swatch-box" style="background: var(--nt-c0)"></span>Videos</span>
       <span class="nt-key"><span class="nt-swatch-box" style="background: var(--nt-c1)"></span>Posts</span>
@@ -220,7 +220,7 @@
 <script>
   // Shared drawing helpers. Every chart is redrawn from scratch on each call.
   window.NT = (() => {
-    // Series colors are set in the page's CSS (--nt-c0..2) to match ai-automations-db.
+    // Series colors are set in the page's CSS (--nt-c0..2).
     const num = d3.format(',');
     const dec = d3.format(',.1~f');
     const day = d3.utcFormat('%-d %b');
@@ -420,7 +420,7 @@
       const columns = body[0];
       const rows = body.slice(1).map((v) => {
         const o = {};
-        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : Number(v[i]); });
+        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : (v[i] === '' || v[i] === undefined ? null : Number(v[i])); });
         return o;
       });
       if (rows.length !== expected) throw new Error(`The file should hold ${expected} rows but ${rows.length} arrived.`);
@@ -459,7 +459,7 @@
       const columns = body[0];
       const rows = body.slice(1).map((v) => {
         const o = {};
-        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : Number(v[i]); });
+        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : (v[i] === '' || v[i] === undefined ? null : Number(v[i])); });
         return o;
       });
       if (rows.length !== expected) throw new Error(`The file should hold ${expected} rows but ${rows.length} arrived.`);
@@ -498,7 +498,7 @@
       const columns = body[0];
       const rows = body.slice(1).map((v) => {
         const o = {};
-        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : Number(v[i]); });
+        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : (v[i] === '' || v[i] === undefined ? null : Number(v[i])); });
         return o;
       });
       if (rows.length !== expected) throw new Error(`The file should hold ${expected} rows but ${rows.length} arrived.`);
@@ -509,7 +509,7 @@
   dash.loader('commits', {
     description: 'Decodes the commits CSV the collector on your Mac writes to Drive and checks it arrived whole.',
     fn: ({ answer }) => {
-      const textColumns = ['date', 'repo'];
+      const textColumns = ['date', 'repo', 'repo_id'];
       if (!answer || !answer.content) throw new Error('Drive returned no file content.');
       const bin = atob(answer.content);
       const text = new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
@@ -537,7 +537,7 @@
       const columns = body[0];
       const rows = body.slice(1).map((v) => {
         const o = {};
-        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : Number(v[i]); });
+        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : (v[i] === '' || v[i] === undefined ? null : Number(v[i])); });
         return o;
       });
       if (rows.length !== expected) throw new Error(`The file should hold ${expected} rows but ${rows.length} arrived.`);
@@ -550,28 +550,42 @@
     description: 'Reads the Slack search for messages you sent and keeps one row per message with its date. Message text is dropped.',
     fn: async ({ answer, call, args }) => {
       const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
-      const london = (iso) => { const p = fmt.formatToParts(new Date(iso)); const g = (t) => p.find((x) => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
+      const localDate = (iso) => { const p = fmt.formatToParts(new Date(iso)); const g = (t) => p.find((x) => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
       const seen = new Set();
       const rows = [];
       let page = answer, pages = 1, truncated = false;
       for (;;) {
         if (!page || typeof page.results !== 'string') throw new Error('Slack returned no search results.');
-        const re = /Time: (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) ([A-Z]{3})\s*\nMessage_ts: ([0-9.]+)/g;
-        let m;
+        // Each result carries "Message_ts: <seconds since 1970>"; the date comes from that.
+        const re = /^Message_ts: (\d{9,11})\.\d+\s*$/gm;
+        let m, found = 0;
         while ((m = re.exec(page.results))) {
-          if (m[3] !== 'GMT' && m[3] !== 'UTC') throw new Error(`Slack gave a time in ${m[3]}, which this page doesn't convert.`);
-          if (seen.has(m[4])) continue;
-          seen.add(m[4]);
-          rows.push({ date: london(`${m[1]}T${m[2]}Z`), workspace: 'Slack', key: m[4] });
+          found += 1;
+          if (seen.has(m[0])) continue;
+          seen.add(m[0]);
+          rows.push({ date: localDate(new Date(Number(m[1]) * 1000).toISOString()), key: m[0] });
         }
+        const listed = (page.results.match(/^### Result /gm) || []).length;
+        if (listed !== found) throw new Error(`Slack listed ${listed} results but ${found} had a readable timestamp; its answer format may have changed.`);
         const info = String(page.pagination_info || '');
         if (/no more pages/i.test(info)) break;
-        const next = /cursor\W*([A-Za-z0-9=_-]{8,})/i.exec(info);
-        if (!next || pages >= 20) { truncated = true; break; }
+        const oldest = rows.reduce((a, r) => (r.date < a ? r.date : a), '9999-12-31');
+        if (oldest < new Date(Date.now() - 84 * 864e5).toISOString().slice(0, 10)) break; // the chart shows 12 weeks
+        const next = /cursor["'`:=\s]+([A-Za-z0-9+/=_-]{8,})/i.exec(info);
+        if (!next || pages >= 60) { truncated = true; break; }
         page = await call('slack_search_public_and_private', { ...args, cursor: next[1] });
         pages += 1;
       }
-      return { data: rows, columns: ['date', 'workspace', 'key'], truncated, meta: [{ label: 'Pages of Slack results read', value: String(pages) }] };
+      // One row per day fully covered, zeros included; days past where paging stopped are left out.
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const today = localDate(new Date().toISOString());
+      let from = localDate(new Date(Date.now() - 84 * 864e5).toISOString());
+      if (truncated && rows.length) { const edge = shift(rows.reduce((a, r) => (r.date < a ? r.date : a), today), 1); if (edge > from) from = edge; }
+      const perDay = new Map();
+      rows.forEach((r) => perDay.set(r.date, (perDay.get(r.date) || 0) + 1));
+      const data = [];
+      for (let d = from; d <= today; d = shift(d, 1)) data.push({ date: d, messages: perDay.get(d) || 0 });
+      return { data, columns: ['date', 'messages'], truncated, meta: [{ label: 'Pages of Slack results read', value: String(pages) }, { label: 'Days fully read from', value: from }] };
     },
   });
 
@@ -582,36 +596,49 @@
       const mine = []; // add any other addresses of yours, lower case; the sender's own address is always left out
       const automated = /(unsub|leave-|bounce|opt-?out|no-?reply|donotreply)/i;
       const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
-      const london = (iso) => { const p = fmt.formatToParts(new Date(iso)); const g = (t) => p.find((x) => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
+      const localDate = (iso) => { const p = fmt.formatToParts(new Date(iso)); const g = (t) => p.find((x) => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
+      const addr = (x) => { const m = /<([^>]+)>/.exec(String(x || '')); return (m ? m[1] : String(x || '')).trim().toLowerCase(); };
       const cutoff = Date.now() - 84 * 864e5;
       const seen = new Set();
       const days = new Map();
+      let oldestThread = null; // threads come newest first, by their latest message
       let page = answer, pages = 1, truncated = false;
       for (;;) {
         if (!page || typeof page !== 'object') throw new Error('Gmail returned no search result.');
         if (page.error) throw new Error(typeof page.error === 'string' ? page.error : page.error.message);
         for (const t of page.threads || []) {
+          const latest = (t.messages || []).reduce((a, m) => (m.date && (!a || new Date(m.date) > new Date(a)) ? m.date : a), null);
+          if (latest && (!oldestThread || new Date(latest) < new Date(oldestThread))) oldestThread = latest;
           for (const m of t.messages || []) {
             if (seen.has(m.id) || !(m.labelIds || []).includes('SENT')) continue;
             seen.add(m.id);
             if (new Date(m.date).getTime() < cutoff) continue;
+            const me = addr(m.sender);
             const to = [...(m.toRecipients || []), ...(m.ccRecipients || []), ...(m.bccRecipients || [])]
-              .map((a) => a.toLowerCase()).filter((a) => a !== String(m.sender || '').toLowerCase() && !mine.includes(a));
+              .map(addr).filter((a) => a && a !== me && !mine.includes(a));
             if (!to.length) continue;
             if (to.every((a) => automated.test(a))) continue;
-            const d = london(m.date);
+            const d = localDate(m.date);
             const row = days.get(d) || { date: d, to_people: 0 };
             row.to_people += 1;
             days.set(d, row);
           }
         }
         if (!page.nextPageToken) break;
-        if (pages >= 40) { truncated = true; break; }
+        if (pages >= 60) { truncated = true; break; }
         page = await call('search_threads', { ...args, pageToken: page.nextPageToken });
         pages += 1;
       }
-      const data = [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
-      return { data, columns: ['date', 'to_people'], truncated, meta: [{ label: 'Pages of sent mail read', value: String(pages) }] };
+      // One row per day the search fully covers, zeros included. If paging stopped
+      // early, days from the oldest thread read back are incomplete and left out,
+      // so the chart shows them as not read rather than as zero.
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const today = localDate(new Date().toISOString());
+      let from = localDate(new Date(cutoff).toISOString());
+      if (truncated && oldestThread) { const edge = shift(localDate(oldestThread), 1); if (edge > from) from = edge; }
+      const data = [];
+      for (let d = from; d <= today; d = shift(d, 1)) data.push({ date: d, to_people: (days.get(d) || { to_people: 0 }).to_people });
+      return { data, columns: ['date', 'to_people'], truncated, meta: [{ label: 'Pages of sent mail read', value: String(pages) }, { label: 'Days fully read from', value: from }] };
     },
   });
 
@@ -621,13 +648,16 @@
     fn: ({ answer }) => {
       const values = (answer && answer.values) || [];
       const rows = [];
-      values.slice(1).forEach(([date, kind, label]) => {
-        let d = (date || '').trim();
-        const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(d);
-        if (us) d = `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`;
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+      const bad = [];
+      values.slice(1).forEach(([date, kind, label], i) => {
+        const d = (date || '').trim();
+        if (!d) return; // blank row
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { bad.push(i + 2); return; }
         rows.push({ date: d, kind: (kind || '').trim(), label: (label || '').trim() });
       });
+      // A date like 05/11/2026 means different days in different locales, so it is
+      // refused rather than guessed. Format the date column as plain text.
+      if (bad.length) throw new Error(`Log rows ${bad.slice(0, 5).join(', ')} have a date that isn't YYYY-MM-DD.`);
       return { data: rows, columns: ['date', 'kind', 'label'], cut: false };
     },
   });
@@ -657,6 +687,7 @@
       return [...byWeek.values()].sort((a, b) => (a.week < b.week ? -1 : 1)).map((w) => ({
         ...w,
         claude_agent_hours: Math.round(w.claude_agent_hours * 10) / 10,
+        claude_agent_minutes: Math.round(w.claude_agent_hours * 60),
         partial: w.days < 7,
       }));
     },
@@ -812,9 +843,10 @@
       for (let week = start; week <= today; week = shift(week, 7)) {
         const end = shift(week, 6);
         const items = sentMail.filter((r) => r.date >= week && r.date <= end);
+        const covered = sentMail.length && sentMail[0].date <= week; // rows start at the first fully read day
         out.push({
           week, partial: end > today,
-          to_people: items.reduce((a, r) => a + r.to_people, 0),
+          to_people: covered ? items.reduce((a, r) => a + r.to_people, 0) : null,
         });
       }
       return out;
@@ -835,7 +867,9 @@
       const out = [];
       for (let week = start; week <= today; week = shift(week, 7)) {
         const end = shift(week, 6);
-        out.push({ week, partial: end > today, slack: slackSent.filter((r) => r.date >= week && r.date <= end).length, workspaces: '' });
+        const covered = slackSent.length && slackSent[0].date <= week;
+        const items = slackSent.filter((r) => r.date >= week && r.date <= end);
+        out.push({ week, partial: end > today, slack: covered ? items.reduce((a, r) => a + r.messages, 0) : null, workspaces: '' });
       }
       return out;
     },
@@ -884,7 +918,9 @@
       const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
       const dates = rescuetime.map((r) => r.date).sort();
       const first = dates[0], last = dates[dates.length - 1];
-      if (first > shift(last, -13)) return blank;
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+      const today = ['year', 'month', 'day'].map((t) => parts.find((p) => p.type === t).value).join('-');
+      if (first > shift(last, -13) || last < shift(today, -3)) return blank; // too short, or not updated lately
       const curFrom = shift(last, -6), prevFrom = shift(last, -13);
       let now = 0, before = 0;
       rescuetime.forEach((r) => {
@@ -966,7 +1002,7 @@
       type.className = 'nt-type';
       type.textContent = names[r.type] || r.type;
       const a = document.createElement('a');
-      a.href = r.url; a.target = '_blank'; a.rel = 'noopener';
+      if (/^https?:\/\//i.test(r.url || '')) { a.href = r.url; a.target = '_blank'; a.rel = 'noopener noreferrer'; }
       a.textContent = r.title;
       a.title = r.title;
       li.append(when, type, a);
@@ -1003,8 +1039,8 @@
       tip: (r) => ({
         head: weekHead(r),
         lines: [
-          ['Emails to people', NT.num(r.to_people)],
-          ['Slack messages', r.slack == null ? 'not counted yet' : NT.num(r.slack)],
+          ['Emails to people', r.to_people == null ? 'not read (too many to page through)' : NT.num(r.to_people)],
+          ['Slack messages', r.slack == null ? 'not read' : NT.num(r.slack)],
           ...titleLines(r.workspaces, 5),
         ],
       }),
@@ -1038,7 +1074,7 @@
   dash.draw('attentionChart', (el) => {
     const s = NT.state(el, 'rtWeekly');
     if (!s) return;
-    if (!s.data.length) { NT.note(el, 'No RescueTime data yet. It starts once the RescueTime API key is in 1Password.'); return; }
+    if (!s.data.length) { NT.note(el, 'No RescueTime data yet. It starts once the collector has a RescueTime key; see the README.'); return; }
     NT.lines(el, s.data.map((w) => ({ ...w, x: NT.parseDay(w.week) })), [
       { key: 'distracting_hours', label: 'All distracting', color: 'var(--nt-c0)' },
       { key: 'social_hours', label: 'Social media', color: 'var(--nt-c1)' },
@@ -1054,7 +1090,7 @@
     const s = NT.state(el, 'weekly');
     if (!s) return;
     const rows = s.data.filter((w) => w.claude_prompts >= 5)
-      .map((w) => ({ ...w, x: NT.parseDay(w.week), min_per_prompt: Math.round((60 * w.claude_agent_hours / w.claude_prompts) * 10) / 10 }));
+      .map((w) => ({ ...w, x: NT.parseDay(w.week), min_per_prompt: Math.round((w.claude_agent_minutes / w.claude_prompts) * 10) / 10 }));
     if (rows.length < 2) { NT.note(el, 'Not enough weeks with Claude prompts yet.'); return; }
     NT.lines(el, rows, [{ key: 'min_per_prompt', label: 'Minutes per prompt', color: 'var(--nt-c0)' }], {
       height: 200,

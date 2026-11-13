@@ -31,10 +31,9 @@
       claude_peak_parallel: prompts ? 1 + Math.min(4, poisson(0.4 + 2 * t)) : 0,
     });
     const n = weekday ? poisson(1 + 4 * t) : poisson(0.4);
-    for (let k = 0; k < n; k++) commits.push({ date, repo: pick(repos), commits: 1 + poisson(1.2) });
+    for (let k = 0; k < n; k++) { const repo = pick(repos); commits.push({ date, repo, repo_id: repo, commits: 1 + poisson(1.2) }); }
     sentMail.push({ date, to_people: weekday ? poisson(5) : poisson(1.2) });
-    const sl = weekday ? poisson(3 + 3 * t) : poisson(0.6);
-    for (let k = 0; k < sl; k++) slack.push({ date, workspace: 'Slack', key: `${date}-${k}` });
+    slack.push({ date, messages: weekday ? poisson(3 + 3 * t) : poisson(0.6) });
     const distracting = Math.max(0.1, (2.4 - 1.5 * t) * (0.6 + rand() * 0.8) + (weekday ? 0 : 0.8));
     rescuetime.push({ date, distracting_hours: Math.round(distracting * 100) / 100, social_hours: Math.round(distracting * (0.45 - 0.15 * t) * 100) / 100 });
   });
@@ -52,7 +51,8 @@
     shipped.push({ date: iso(days[i]), type, title, url: `https://example.com/${type}/${used[type]}` });
   });
 
-  const external = ['Open Research Lab', 'Policy Institute', 'Funder Foundation', 'Startup founder', 'University team', 'Advisory network'];
+  // Made-up names, chosen not to match real organizations.
+  const external = ['Example Research Lab', 'Sample Policy Group', 'Demo Foundation', 'A startup founder', 'Another university', 'An advisor'];
   const internal = ['Data team', 'Research group', 'Operations'];
   days.forEach((d, i) => {
     const t = i / (DAYS - 1);
