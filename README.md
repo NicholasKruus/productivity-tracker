@@ -5,7 +5,7 @@ published, code you committed, conversations in your field, applications you
 sent, emails and Slack messages you wrote, time lost to distracting sites, and
 how much work Claude does for each prompt you give it.
 
-**Demo with made-up numbers:** DEMO_URL
+**Demo with made-up numbers:** https://productivity-tracker-claude.vercel.app
 
 It counts outcomes rather than effort, and it collects everything itself. Trackers
 you have to fill in by hand tend to lapse; this one keeps going without you.
