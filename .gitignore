@@ -1,0 +1,4 @@
+__pycache__/
+collector/config.toml
+collector/.env
+.DS_Store

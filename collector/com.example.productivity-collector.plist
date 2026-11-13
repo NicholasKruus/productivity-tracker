@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Runs the collector every hour. Replace YOU with your macOS user name and the
+     python3 path with yours (Python 3.11 or newer), then:
+       cp com.example.productivity-collector.plist ~/Library/LaunchAgents/
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.productivity-collector.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.productivity-collector</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>/Users/YOU/productivity-tracker/collector/collector.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/Library/Logs/productivity-collector.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/Library/Logs/productivity-collector.log</string>
+</dict>
+</plist>

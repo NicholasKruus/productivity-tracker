@@ -1,0 +1,1117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Productivity tracker demo</title>
+<meta name="description" content="A weekly dashboard of finished work, conversations, commits and focus, built with Claude. Demo with made-up numbers.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter+Tight:wght@800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="demo-data.js"></script>
+<script src="shim.js"></script>
+<style>
+  body { margin: 0; background: #fff; }
+  .demo-bar { display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: space-between; padding: 10px 28px; border-bottom: 1px solid rgba(11, 15, 23, 0.12); background: #e5f1ff; color: #0052a8; font: 500 10px/1.6 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: 0.06em; text-transform: uppercase; }
+  .demo-bar a { color: #0052a8; }
+  @media (max-width: 520px) { .demo-bar { padding: 10px 16px; } }
+</style>
+</head>
+<body>
+<div class="demo-bar"><span>Demo with made-up numbers</span><a href="https://github.com/NicholasKruus/productivity-tracker">Code and setup on GitHub</a></div>
+<div id="dash-root">
+<style>
+  /* Look of ai-automations-db.vercel.app: white paper, near-black ink, #007fff accent,
+     heavy uppercase Inter Tight headings, IBM Plex Mono labels, hairline rules. */
+  #dash-root { --dash-gutter: 0; }
+  .nt {
+    --k-ink: #0b0f17; --k-paper: #ffffff; --k-muted: #535a67;
+    --k-accent: #007fff; --k-accent-deep: #0070e0;
+    --k-line: rgba(11, 15, 23, 0.12); --k-line-strong: rgba(11, 15, 23, 0.3);
+    --k-green: #3fcf86; --k-amber: #e9b80f;
+    --k-good: #13804b; --k-bad: #b42318;
+    --f-sans: "Inter", system-ui, -apple-system, sans-serif;
+    --f-display: "Inter Tight", "Inter", system-ui, -apple-system, sans-serif;
+    --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --nt-c0: var(--k-accent); --nt-c1: var(--k-amber); --nt-c2: var(--k-green);
+    --nt-pad: 28px;
+    display: grid; background: var(--k-paper); color: var(--k-ink); font-family: var(--f-sans);
+    font-size: 14px; color-scheme: light; border-top: 1px solid var(--k-line);
+  }
+  .nt code { font-family: var(--f-mono); font-size: 0.92em; }
+  .nt-idx { margin: 0; font-family: var(--f-mono); font-size: 10px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
+  .nt-idx::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 7px; vertical-align: 2px; background: currentColor; }
+  .nt-head { display: grid; gap: 22px; padding: 34px var(--nt-pad); border-bottom: 1px solid var(--k-line); }
+  .nt-head h1 { margin: 0; font-family: var(--f-display); font-weight: 900; font-size: clamp(36px, 7.5vw, 92px); line-height: 0.86; letter-spacing: -0.055em; text-transform: uppercase; text-wrap: balance; }
+  .nt-lede { margin: 0; max-width: 62ch; font-size: 15px; line-height: 1.5; }
+  .nt-lede b { color: var(--k-accent-deep); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .nt-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); border-bottom: 1px solid var(--k-line); overflow: hidden; }
+  .nt-kpi { display: grid; gap: 8px; align-content: start; min-width: 0; padding: 22px var(--nt-pad); border-right: 1px solid var(--k-line); border-bottom: 1px solid var(--k-line); margin: 0 -1px -1px 0; }
+  .nt-kpi-label { font-family: var(--f-mono); font-size: 10px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--k-muted); }
+  .nt-kpi-value { font-family: var(--f-display); font-weight: 800; font-size: 46px; line-height: 1; letter-spacing: -0.045em; font-variant-numeric: tabular-nums; }
+  .nt-kpi-change { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--k-muted); font-variant-numeric: tabular-nums; }
+  .nt-good { color: var(--k-good); }
+  .nt-bad { color: var(--k-bad); }
+  .nt-sec { display: grid; gap: 12px; min-width: 0; padding: 28px var(--nt-pad) 32px; border-bottom: 1px solid var(--k-line); }
+  .nt-sec h2 { margin: 0; font-family: var(--f-display); font-weight: 900; font-size: clamp(22px, 3.2vw, 32px); line-height: 0.95; letter-spacing: -0.035em; text-transform: uppercase; text-wrap: balance; }
+  .nt-why { margin: 0; max-width: 68ch; color: var(--k-muted); font-size: 13px; line-height: 1.55; }
+  .nt-why a, .nt-notes a { color: var(--k-accent-deep); }
+  .nt-legend { display: flex; flex-wrap: wrap; gap: 16px; font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--k-muted); }
+  .nt-key { display: inline-flex; align-items: center; gap: 7px; }
+  .nt-swatch { width: 14px; height: 2px; display: inline-block; }
+  .nt-swatch-box { width: 7px; height: 7px; display: inline-block; }
+  .nt-chart { position: relative; min-height: 240px; }
+  .nt-chart-short { min-height: 200px; }
+  .nt-chart svg { display: block; overflow: visible; }
+  .nt-chart text { fill: var(--k-muted); font-family: var(--f-mono); font-size: 10px; }
+  .nt-chart .domain { stroke: var(--k-line-strong); }
+  .nt-chart .tick line { stroke: var(--k-line); }
+  .nt-fail { font-family: var(--f-mono); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--k-muted); padding: 12px 0; }
+  .nt-tip { position: absolute; pointer-events: none; display: grid; gap: 3px; z-index: 2; max-width: 320px; padding: 8px 10px; background: var(--k-paper); color: var(--k-ink); border: 1px solid var(--k-ink); font-family: var(--f-mono); font-size: 11px; white-space: nowrap; }
+  .nt-tip[hidden] { display: none; }
+  .nt-tip > div { overflow: hidden; text-overflow: ellipsis; }
+  .nt-tip-head { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .nt-tip-muted { color: var(--k-muted); }
+  .nt-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; max-width: 76ch; border-top: 1px solid var(--k-line); }
+  .nt-list li { display: grid; grid-template-columns: 5.5em 5em 1fr; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--k-line); font-size: 13px; }
+  .nt-list .nt-when, .nt-list .nt-type { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--k-muted); font-variant-numeric: tabular-nums; }
+  .nt-list a { color: var(--k-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration-color: var(--k-line-strong); text-underline-offset: 3px; }
+  .nt-list a:hover { color: var(--k-accent-deep); }
+  .nt-notes { padding: 22px var(--nt-pad) 34px; color: var(--k-muted); }
+  .nt-notes summary { cursor: pointer; color: var(--k-ink); font-family: var(--f-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
+  .nt-notes ul { margin: 14px 0 0; padding-left: 1.1em; display: grid; gap: 8px; max-width: 74ch; font-size: 13px; line-height: 1.55; }
+  .nt-notes b { color: var(--k-ink); }
+  .nt :focus-visible { outline: 2px solid var(--k-accent-deep); outline-offset: 2px; }
+  @media (max-width: 520px) { .nt { --nt-pad: 16px; } .nt-kpi-value { font-size: 38px; } }
+  [data-dash-source-state=refreshing] { opacity: .5; }
+</style>
+
+<div class="nt">
+  <header class="nt-head" id="top">
+    <p class="nt-idx">Productivity / Week by week</p>
+    <h1>Productivity tracker</h1>
+    <p class="nt-lede" id="takeaway">In the last 28 days you published <b data-draw="ledePublished" data-source="shipped28" data-field="now" data-where="metric=published">—</b> pieces, had <b data-draw="ledeTalks" data-source="log28" data-field="now" data-where="metric=conversations">—</b> conversations in your field and sent <b data-draw="ledeApps" data-source="log28" data-field="now" data-where="metric=applications">—</b> applications.</p>
+  </header>
+
+  <section class="nt-kpis" id="kpis" aria-label="Last 28 days">
+    <div class="nt-kpi" id="kpi-published">
+      <span class="nt-kpi-label">Pieces published, last 28 days</span>
+      <span class="nt-kpi-value" data-draw="kpiPublished" data-source="shipped28" data-field="now" data-where="metric=published">—</span>
+      <span class="nt-kpi-change"><span data-draw="chgPublished" data-source="shipped28" data-field="change" data-where="metric=published">—</span> vs the 28 days before</span>
+    </div>
+    <div class="nt-kpi" id="kpi-talks">
+      <span class="nt-kpi-label">Conversations in your field, last 28 days</span>
+      <span class="nt-kpi-value" data-draw="kpiTalks" data-source="log28" data-field="now" data-where="metric=conversations">—</span>
+      <span class="nt-kpi-change"><span data-draw="chgTalks" data-source="log28" data-field="change" data-where="metric=conversations">—</span> vs the 28 days before</span>
+    </div>
+    <div class="nt-kpi" id="kpi-apps">
+      <span class="nt-kpi-label">Applications sent, last 28 days</span>
+      <span class="nt-kpi-value" data-draw="kpiApps" data-source="log28" data-field="now" data-where="metric=applications">—</span>
+      <span class="nt-kpi-change"><span data-draw="chgApps" data-source="log28" data-field="change" data-where="metric=applications">—</span> vs the 28 days before</span>
+    </div>
+    <div class="nt-kpi" id="kpi-distracting">
+      <span class="nt-kpi-label">Distracting hours, last 7 days</span>
+      <span class="nt-kpi-value" data-draw="kpiDistracting" data-source="rt7" data-field="now" data-where="metric=distracting_hours">—</span>
+      <span class="nt-kpi-change"><span data-draw="chgDistracting" data-source="rt7" data-field="change" data-where="metric=distracting_hours">—</span> vs the 7 days before</span>
+    </div>
+  </section>
+
+  <section class="nt-sec" id="published">
+    <p class="nt-idx">01 / Published</p>
+    <h2>What you published, per week</h2>
+    <p class="nt-why">Each finished public piece counts once, however many platforms it went to, and a short clip counts the same as a long paper. A paler bar is the week so far.</p>
+    <div class="nt-legend" aria-hidden="true">
+      <span class="nt-key"><span class="nt-swatch-box" style="background: var(--nt-c0)"></span>Videos</span>
+      <span class="nt-key"><span class="nt-swatch-box" style="background: var(--nt-c1)"></span>Posts</span>
+      <span class="nt-key"><span class="nt-swatch-box" style="background: var(--nt-c2)"></span>Papers and articles</span>
+    </div>
+    <div class="nt-chart nt-chart-short" id="published-chart" data-draw="publishedChart" data-source="shippedWeekly"></div>
+    <ul class="nt-list" id="published-list" aria-label="Latest published pieces" data-draw="publishedList" data-source="shipped"></ul>
+  </section>
+
+  <section class="nt-sec" id="code">
+    <p class="nt-idx">02 / Code</p>
+    <h2>Commits to your repos, per week</h2>
+    <p class="nt-why">Code you shipped, counted from the git history of the repos on your Mac, including commits Claude made for you. Point at a week to see which repos. A dashed segment is the week so far.</p>
+    <div class="nt-chart nt-chart-short" id="code-chart" data-draw="codeChart" data-source="commitsWeekly"></div>
+  </section>
+
+  <section class="nt-sec" id="talks">
+    <p class="nt-idx">03 / Conversations</p>
+    <h2>Conversations and applications, per week</h2>
+    <p class="nt-why">Calls and meetings about your work, career or field with people outside your organization, or with colleagues who work in your field, plus applications you sent. A daily Claude routine logs each one in a Google Sheet with who it was, so you can check what was counted. A paler bar is the week so far.</p>
+    <div class="nt-legend" aria-hidden="true">
+      <span class="nt-key"><span class="nt-swatch-box" style="background: var(--nt-c0)"></span>Outside your organization</span>
+      <span class="nt-key"><span class="nt-swatch-box" style="background: var(--nt-c1)"></span>Colleagues in your field</span>
+      <span class="nt-key"><span class="nt-swatch-box" style="background: var(--nt-c2)"></span>Applications</span>
+    </div>
+    <div class="nt-chart nt-chart-short" id="talks-chart" data-draw="talksChart" data-source="logWeekly"></div>
+  </section>
+
+  <section class="nt-sec" id="email">
+    <p class="nt-idx">04 / Email</p>
+    <h2>Emails and Slack messages you sent, last 12 weeks</h2>
+    <p class="nt-why">Emails to people, read live from Gmail, without unsubscribe requests or notes to yourself, and Slack messages you sent, from Slack search. Point at a week to see the numbers. A dashed segment is the week so far.</p>
+    <div class="nt-legend" aria-hidden="true">
+      <span class="nt-key"><span class="nt-swatch" style="background: var(--nt-c0)"></span>Emails to people</span>
+      <span class="nt-key"><span class="nt-swatch" style="background: var(--nt-c1)"></span>Slack messages</span>
+    </div>
+    <div class="nt-chart nt-chart-short" id="email-chart" data-draw="mailChart" data-source="mailWeekly slackWeekly"></div>
+  </section>
+
+  <section class="nt-sec" id="attention">
+    <p class="nt-idx">05 / Attention</p>
+    <h2>Hours on distracting sites and apps, per week</h2>
+    <p class="nt-why">From RescueTime: all the time it rates distracting, and the part of it on social media. Nothing needs logging by hand. The aim is for both lines to fall. A dashed segment is the week so far.</p>
+    <div class="nt-legend" aria-hidden="true">
+      <span class="nt-key"><span class="nt-swatch" style="background: var(--nt-c0)"></span>All distracting</span>
+      <span class="nt-key"><span class="nt-swatch" style="background: var(--nt-c1)"></span>Social media</span>
+    </div>
+    <div class="nt-chart nt-chart-short" id="attention-chart" data-draw="attentionChart" data-source="rtWeekly"></div>
+  </section>
+
+
+  <section class="nt-sec" id="delegation">
+    <p class="nt-idx">06 / Claude</p>
+    <h2>Hours Claude spent working for you, per week</h2>
+    <p class="nt-why">Time an agent spent on work you handed off. Point at a week to see prompts, sessions and the most sessions you had running at once. A dashed segment is the week so far.</p>
+    <div class="nt-chart nt-chart-short" id="delegation-chart" data-draw="delegationChart" data-source="weekly"></div>
+  </section>
+
+  <section class="nt-sec" id="leverage">
+    <p class="nt-idx">07 / Leverage</p>
+    <h2>Claude's work per prompt you write, per week</h2>
+    <p class="nt-why">Minutes Claude spends working for each prompt you send: how much one instruction gets done. It rises when you hand over bigger, clearer tasks and fewer small corrections. It can also rise when Claude is stuck, so read it next to what you shipped. A dashed segment is the week so far.</p>
+    <div class="nt-chart nt-chart-short" id="leverage-chart" data-draw="leverageChart" data-source="weekly"></div>
+  </section>
+
+  <section class="nt-sec" id="voice">
+    <p class="nt-idx">08 / Voice</p>
+    <h2>Words you spoke vs words you typed to Claude, per week</h2>
+    <p class="nt-why">Speaking is faster than typing for most people, and every word you type to Claude could be dictated instead, so the aim is for the two lines to meet. A dashed segment is the week so far.</p>
+    <div class="nt-legend" aria-hidden="true">
+      <span class="nt-key"><span class="nt-swatch" style="background: var(--nt-c0)"></span>Typed to Claude</span>
+      <span class="nt-key"><span class="nt-swatch" style="background: var(--nt-c1)"></span>Dictated, any app</span>
+    </div>
+    <div class="nt-chart" id="voice-chart" data-draw="voiceChart" data-source="weekly"></div>
+  </section>
+
+  <details class="nt-notes" id="notes">
+    <summary>How these numbers are counted, and what's missing</summary>
+    <ul>
+      <li><b>Where they come from.</b> A script on your Mac writes small files to a Google Drive folder every hour, a daily Claude routine fills a log sheet, and Gmail and Slack are read live. This page reads them all when it opens.</li>
+      <li><b>Published</b> counts items in the public feeds you list: YouTube channels and any RSS or Atom feed, such as a Substack or a blog. Each item counts once, on the day it appeared.</li>
+      <li><b>Commits</b> come from every git repo in your home folder up to three levels down, except Desktop, Documents and Downloads, which macOS guards. Only commits under your own emails count, so Claude's commits in your repos do and cloned tools don't.</li>
+      <li><b>Conversations</b> are judged daily by a Claude routine from your meeting notes and calendar. It counts talks about work, career or your field with people outside your organization, and talks about your field with colleagues. It never counts classes, health appointments, family or purely social plans, and it skips any folders you mark private.</li>
+      <li><b>Applications</b> come from receipts in your Gmail and applications you emailed. One with no receipt or email is missed.</li>
+      <li><b>Emails</b> are your sent mail in Gmail over the last 12 weeks. An email whose recipients are all unsubscribe, bounce or no-reply addresses isn't counted, and neither is one only to yourself. Gmail lists at most five messages per thread, so a very long thread can be undercounted. <b>Slack messages</b> are the ones Slack search finds from you.</li>
+      <li><b>Distracting time</b> is everything RescueTime rates distracting or very distracting. <b>Social media</b> is the categories you choose, such as General Social Networking. RescueTime is read once a day, up to yesterday.</li>
+      <li><b>Claude's work per prompt</b> is hours Claude worked divided by prompts you wrote, per week, for weeks with at least 5 prompts. Commits or posts per Claude hour would measure output more directly, but much of Claude's work (admin, research, setup) produces neither.</li>
+      <li><b>Typed to Claude</b> counts the words in Claude Code prompts you wrote, minus pastes, code blocks and system text. <b>Dictated</b> counts superwhisper words. A resumed Claude Code session copies the earlier conversation into a new file, so each entry counts once.</li>
+      <li><b>Hours Claude worked</b> runs from each prompt you send to Claude's last step before your next one. The clock stops after 15 idle minutes. Sessions running at once each count. Claude Code deletes transcripts after 30 days, so the script keeps each day's counts once they're 20 days old.</li>
+    </ul>
+  </details>
+</div>
+
+<script>
+  // Shared drawing helpers. Every chart is redrawn from scratch on each call.
+  window.NT = (() => {
+    // Series colors are set in the page's CSS (--nt-c0..2) to match ai-automations-db.
+    const num = d3.format(',');
+    const dec = d3.format(',.1~f');
+    const day = d3.utcFormat('%-d %b');
+    const dayYear = d3.utcFormat('%-d %b %Y');
+    const parseDay = (s) => new Date(s + 'T00:00:00Z');
+
+    function state(el, src) {
+      const s = dash.data(src);
+      el.classList.toggle('dash-skeleton', s.status === 'loading');
+      if (s.status === 'ok') return s;
+      el.replaceChildren();
+      if (s.status === 'error' || s.status === 'missing') note(el, 'Failed to load');
+      return null;
+    }
+
+    function note(el, text) {
+      el.replaceChildren();
+      const p = document.createElement('div');
+      p.className = 'nt-fail';
+      p.textContent = text;
+      el.appendChild(p);
+    }
+
+    function measure(svg, texts) {
+      const probe = svg.append('text');
+      let w = 0;
+      texts.forEach((t) => { probe.text(t); w = Math.max(w, probe.node().getComputedTextLength()); });
+      probe.remove();
+      return w;
+    }
+
+    function tooltip(el) {
+      const t = document.createElement('div');
+      t.className = 'nt-tip';
+      t.hidden = true;
+      el.appendChild(t);
+      return {
+        show(x, y, head, lines) {
+          t.replaceChildren();
+          const h = document.createElement('div');
+          h.className = 'nt-tip-head';
+          h.textContent = head;
+          t.appendChild(h);
+          lines.forEach(([label, value, muted]) => {
+            const r = document.createElement('div');
+            if (muted) r.className = 'nt-tip-muted';
+            r.textContent = value === undefined ? label : label + ': ' + value;
+            t.appendChild(r);
+          });
+          t.hidden = false;
+          const W = el.clientWidth, tw = t.offsetWidth, th = t.offsetHeight;
+          let left = x + 12;
+          if (left + tw > W) left = Math.max(0, x - tw - 12);
+          t.style.left = left + 'px';
+          t.style.top = Math.max(0, y - th - 8) + 'px';
+        },
+        hide() { t.hidden = true; },
+      };
+    }
+
+    function xTicks(svg, x, g, width, fmt, count) {
+      const n = Math.max(2, Math.min(count, Math.floor(width / 70)));
+      g.call(d3.axisBottom(x).ticks(n).tickFormat(fmt).tickSizeOuter(0));
+    }
+
+    // Weekly lines. series: [{key, label, color}]
+    function lines(el, rows, series, opts) {
+      el.replaceChildren();
+      const W = Math.max(280, el.clientWidth), H = opts.height || 240;
+      const svg = d3.select(el).append('svg').attr('width', '100%').attr('height', H).attr('viewBox', `0 0 ${W} ${H}`)
+        .attr('role', 'img').attr('aria-label', opts.label);
+      const ymax = d3.max(rows, (r) => d3.max(series, (s) => r[s.key])) || 1;
+      const y = d3.scaleLinear().domain([0, ymax]).nice().range([H - 26, 8]);
+      const ticks = opts.integer ? y.ticks(4).filter(Number.isInteger) : y.ticks(4);
+      const ml = measure(svg, ticks.map(opts.yFmt)) + 10, mr = 14;
+      const x = d3.scaleUtc().domain(d3.extent(rows, (r) => r.x)).range([ml, W - mr]);
+      svg.append('g').attr('transform', `translate(${ml},0)`)
+        .call(d3.axisLeft(y).tickValues(ticks).tickFormat(opts.yFmt).tickSize(-(W - ml - mr)))
+        .call((g) => g.select('.domain').remove());
+      const xAxis = svg.append('g').attr('transform', `translate(0,${H - 26})`);
+      if (rows.length <= 8) xAxis.call(d3.axisBottom(x).tickValues(rows.map((r) => r.x)).tickFormat(day).tickSizeOuter(0));
+      else xTicks(svg, x, xAxis, W - ml - mr, day, 8);
+      series.forEach((s) => {
+        // Very lightly smoothed: a cardinal spline at tension 0.9 stays close to straight segments.
+        const line = d3.line().curve(d3.curveCardinal.tension(0.9)).defined((r) => r[s.key] != null).x((r) => x(r.x)).y((r) => y(r[s.key]));
+        const done = rows.filter((r) => !r.partial);
+        const tail = rows.slice(Math.max(0, done.length - 1));
+        svg.append('path').attr('d', line(done)).style('fill', 'none').style('stroke', s.color).style('stroke-width', 2);
+        if (tail.length > 1) svg.append('path').attr('d', line(tail)).style('fill', 'none').style('stroke', s.color).style('stroke-width', 2).style('stroke-dasharray', '4 4');
+        const last = [...rows].reverse().find((r) => r[s.key] != null);
+        if (last) svg.append('circle').attr('cx', x(last.x)).attr('cy', y(last[s.key])).attr('r', 3.5)
+          .style('fill', last.partial ? 'var(--k-paper)' : s.color).style('stroke', s.color).style('stroke-width', 2);
+      });
+      hover(el, svg, rows, x, ml, W - mr, H, opts.tip);
+    }
+
+    // Weekly bars. stack: [{key, label, color}]
+    function bars(el, rows, stack, opts) {
+      el.replaceChildren();
+      const W = Math.max(280, el.clientWidth), H = opts.height || 200;
+      const svg = d3.select(el).append('svg').attr('width', '100%').attr('height', H).attr('viewBox', `0 0 ${W} ${H}`)
+        .attr('role', 'img').attr('aria-label', opts.label);
+      const total = (r) => d3.sum(stack, (s) => r[s.key]);
+      const y = d3.scaleLinear().domain([0, d3.max(rows, total) || 1]).nice().range([H - 26, 8]);
+      const ticks = opts.integer ? y.ticks(4).filter(Number.isInteger) : y.ticks(4);
+      const ml = measure(svg, ticks.map(opts.yFmt)) + 10, mr = 6;
+      const x = d3.scaleBand().domain(rows.map((r) => r.week)).range([ml, W - mr]).padding(0.25);
+      svg.append('g').attr('transform', `translate(${ml},0)`)
+        .call(d3.axisLeft(y).tickValues(ticks).tickFormat(opts.yFmt).tickSize(-(W - ml - mr)))
+        .call((g) => g.select('.domain').remove());
+      const every = Math.max(1, Math.ceil(rows.length / Math.max(2, Math.floor((W - ml - mr) / 70))));
+      svg.append('g').attr('transform', `translate(0,${H - 26})`)
+        .call(d3.axisBottom(x).tickValues(rows.map((r) => r.week).filter((_, i) => (rows.length - 1 - i) % every === 0))
+          .tickFormat((w) => day(parseDay(w))).tickSizeOuter(0));
+      rows.forEach((r) => {
+        let base = 0;
+        stack.forEach((s) => {
+          const v = r[s.key] || 0;
+          if (v > 0) {
+            svg.append('rect').attr('x', x(r.week)).attr('width', x.bandwidth())
+              .attr('y', y(base + v)).attr('height', Math.max(0, y(base) - y(base + v)))
+              .style('fill', s.color).style('opacity', r.partial ? 0.5 : 1);
+          }
+          base += v;
+        });
+      });
+      const centers = rows.map((r) => ({ ...r, cx: x(r.week) + x.bandwidth() / 2 }));
+      hoverBand(el, svg, centers, ml, W - mr, H, opts.tip);
+    }
+
+    function hover(el, svg, rows, x, x0, x1, H, tipFn) {
+      const tip = tooltip(el);
+      const rule = svg.append('line').attr('y1', 8).attr('y2', H - 26).style('stroke', 'var(--k-ink)').style('opacity', 0);
+      const pick = (px) => rows.reduce((a, b) => (Math.abs(x(b.x) - px) < Math.abs(x(a.x) - px) ? b : a));
+      const move = (ev) => {
+        const [px] = d3.pointer(ev, svg.node());
+        const scale = svg.node().getBoundingClientRect().width / svg.node().viewBox.baseVal.width;
+        const r = pick(px);
+        rule.attr('x1', x(r.x)).attr('x2', x(r.x)).style('opacity', 1);
+        const t = tipFn(r);
+        tip.show(x(r.x) * scale, 30, t.head, t.lines);
+      };
+      svg.append('rect').attr('x', x0).attr('y', 0).attr('width', x1 - x0).attr('height', H).style('fill', 'transparent')
+        .on('pointermove', move).on('pointerdown', move)
+        .on('pointerleave', () => { tip.hide(); rule.style('opacity', 0); });
+    }
+
+    function hoverBand(el, svg, rows, x0, x1, H, tipFn) {
+      const tip = tooltip(el);
+      const move = (ev) => {
+        const [px] = d3.pointer(ev, svg.node());
+        const scale = svg.node().getBoundingClientRect().width / svg.node().viewBox.baseVal.width;
+        const r = rows.reduce((a, b) => (Math.abs(b.cx - px) < Math.abs(a.cx - px) ? b : a));
+        const t = tipFn(r);
+        tip.show(r.cx * scale, 30, t.head, t.lines);
+      };
+      svg.append('rect').attr('x', x0).attr('y', 0).attr('width', x1 - x0).attr('height', H).style('fill', 'transparent')
+        .on('pointermove', move).on('pointerdown', move).on('pointerleave', () => tip.hide());
+    }
+
+    function signed(v, f) { return v === 0 ? '0' : (v > 0 ? '+' : '-') + f(Math.abs(v)); }
+
+    return { num, dec, day, dayYear, parseDay, state, note, measure, tooltip, lines, bars, signed };
+  })();
+</script>
+
+<script>
+  // Loaders turn each source's answer into rows; calcs work out weekly and 28-day figures.
+  dash.loader('daily', {
+    description: 'Decodes the daily CSV the collector on your Mac writes to Drive, checks it arrived whole, and types its numbers.',
+    fn: ({ answer }) => {
+      const textColumns = ['date'];
+      if (!answer || !answer.content) throw new Error('Drive returned no file content.');
+      const bin = atob(answer.content);
+      const text = new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+      const lines = text.split('\n');
+      const end = lines.find((l) => l.startsWith('# end rows='));
+      if (!end) throw new Error('The file came back cut short: its end line is missing.');
+      const expected = Number(end.match(/rows=(\d+)/)[1]);
+      const written = (end.match(/written=(\S+)/) || [])[1];
+      // CSV with quoted fields (titles can hold commas and quotes).
+      const csv = lines.filter((l) => !l.startsWith('#')).join('\n');
+      const grid = [];
+      let row = [], f = '', q = false;
+      for (let i = 0; i < csv.length; i++) {
+        const ch = csv[i];
+        if (q) {
+          if (ch === '"') { if (csv[i + 1] === '"') { f += '"'; i++; } else q = false; }
+          else f += ch;
+        } else if (ch === '"') q = true;
+        else if (ch === ',') { row.push(f); f = ''; }
+        else if (ch === '\n') { row.push(f); grid.push(row); row = []; f = ''; }
+        else if (ch !== '\r') f += ch;
+      }
+      if (f !== '' || row.length) { row.push(f); grid.push(row); }
+      const body = grid.filter((r) => r.length > 1 || r[0] !== '');
+      const columns = body[0];
+      const rows = body.slice(1).map((v) => {
+        const o = {};
+        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : Number(v[i]); });
+        return o;
+      });
+      if (rows.length !== expected) throw new Error(`The file should hold ${expected} rows but ${rows.length} arrived.`);
+      return { data: rows, columns, cut: false, meta: written ? [{ label: 'Collector wrote this file at (UTC)', value: written }] : [] };
+    },
+  });
+
+  dash.loader('shipped', {
+    description: 'Decodes the published-work CSV the collector on your Mac writes to Drive and checks it arrived whole.',
+    fn: ({ answer }) => {
+      const textColumns = ['date', 'type', 'title', 'url'];
+      if (!answer || !answer.content) throw new Error('Drive returned no file content.');
+      const bin = atob(answer.content);
+      const text = new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+      const lines = text.split('\n');
+      const end = lines.find((l) => l.startsWith('# end rows='));
+      if (!end) throw new Error('The file came back cut short: its end line is missing.');
+      const expected = Number(end.match(/rows=(\d+)/)[1]);
+      const written = (end.match(/written=(\S+)/) || [])[1];
+      // CSV with quoted fields (titles can hold commas and quotes).
+      const csv = lines.filter((l) => !l.startsWith('#')).join('\n');
+      const grid = [];
+      let row = [], f = '', q = false;
+      for (let i = 0; i < csv.length; i++) {
+        const ch = csv[i];
+        if (q) {
+          if (ch === '"') { if (csv[i + 1] === '"') { f += '"'; i++; } else q = false; }
+          else f += ch;
+        } else if (ch === '"') q = true;
+        else if (ch === ',') { row.push(f); f = ''; }
+        else if (ch === '\n') { row.push(f); grid.push(row); row = []; f = ''; }
+        else if (ch !== '\r') f += ch;
+      }
+      if (f !== '' || row.length) { row.push(f); grid.push(row); }
+      const body = grid.filter((r) => r.length > 1 || r[0] !== '');
+      const columns = body[0];
+      const rows = body.slice(1).map((v) => {
+        const o = {};
+        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : Number(v[i]); });
+        return o;
+      });
+      if (rows.length !== expected) throw new Error(`The file should hold ${expected} rows but ${rows.length} arrived.`);
+      return { data: rows, columns, cut: false, meta: written ? [{ label: 'Collector wrote this file at (UTC)', value: written }] : [] };
+    },
+  });
+
+  dash.loader('rescuetime', {
+    description: 'Decodes the RescueTime CSV the collector on your Mac writes to Drive and checks it arrived whole.',
+    fn: ({ answer }) => {
+      const textColumns = ['date'];
+      if (!answer || !answer.content) throw new Error('Drive returned no file content.');
+      const bin = atob(answer.content);
+      const text = new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+      const lines = text.split('\n');
+      const end = lines.find((l) => l.startsWith('# end rows='));
+      if (!end) throw new Error('The file came back cut short: its end line is missing.');
+      const expected = Number(end.match(/rows=(\d+)/)[1]);
+      const written = (end.match(/written=(\S+)/) || [])[1];
+      // CSV with quoted fields (titles can hold commas and quotes).
+      const csv = lines.filter((l) => !l.startsWith('#')).join('\n');
+      const grid = [];
+      let row = [], f = '', q = false;
+      for (let i = 0; i < csv.length; i++) {
+        const ch = csv[i];
+        if (q) {
+          if (ch === '"') { if (csv[i + 1] === '"') { f += '"'; i++; } else q = false; }
+          else f += ch;
+        } else if (ch === '"') q = true;
+        else if (ch === ',') { row.push(f); f = ''; }
+        else if (ch === '\n') { row.push(f); grid.push(row); row = []; f = ''; }
+        else if (ch !== '\r') f += ch;
+      }
+      if (f !== '' || row.length) { row.push(f); grid.push(row); }
+      const body = grid.filter((r) => r.length > 1 || r[0] !== '');
+      const columns = body[0];
+      const rows = body.slice(1).map((v) => {
+        const o = {};
+        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : Number(v[i]); });
+        return o;
+      });
+      if (rows.length !== expected) throw new Error(`The file should hold ${expected} rows but ${rows.length} arrived.`);
+      return { data: rows, columns, cut: false, meta: written ? [{ label: 'Collector wrote this file at (UTC)', value: written }] : [] };
+    },
+  });
+
+  dash.loader('commits', {
+    description: 'Decodes the commits CSV the collector on your Mac writes to Drive and checks it arrived whole.',
+    fn: ({ answer }) => {
+      const textColumns = ['date', 'repo'];
+      if (!answer || !answer.content) throw new Error('Drive returned no file content.');
+      const bin = atob(answer.content);
+      const text = new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+      const lines = text.split('\n');
+      const end = lines.find((l) => l.startsWith('# end rows='));
+      if (!end) throw new Error('The file came back cut short: its end line is missing.');
+      const expected = Number(end.match(/rows=(\d+)/)[1]);
+      const written = (end.match(/written=(\S+)/) || [])[1];
+      // CSV with quoted fields (titles can hold commas and quotes).
+      const csv = lines.filter((l) => !l.startsWith('#')).join('\n');
+      const grid = [];
+      let row = [], f = '', q = false;
+      for (let i = 0; i < csv.length; i++) {
+        const ch = csv[i];
+        if (q) {
+          if (ch === '"') { if (csv[i + 1] === '"') { f += '"'; i++; } else q = false; }
+          else f += ch;
+        } else if (ch === '"') q = true;
+        else if (ch === ',') { row.push(f); f = ''; }
+        else if (ch === '\n') { row.push(f); grid.push(row); row = []; f = ''; }
+        else if (ch !== '\r') f += ch;
+      }
+      if (f !== '' || row.length) { row.push(f); grid.push(row); }
+      const body = grid.filter((r) => r.length > 1 || r[0] !== '');
+      const columns = body[0];
+      const rows = body.slice(1).map((v) => {
+        const o = {};
+        columns.forEach((c, i) => { o[c] = textColumns.includes(c) ? v[i] : Number(v[i]); });
+        return o;
+      });
+      if (rows.length !== expected) throw new Error(`The file should hold ${expected} rows but ${rows.length} arrived.`);
+      return { data: rows, columns, cut: false, meta: written ? [{ label: 'Collector wrote this file at (UTC)', value: written }] : [] };
+    },
+  });
+
+  // The Slack connector answers in text blocks, one per message; keep only each message's date.
+  dash.loader('slack_sent', {
+    description: 'Reads the Slack search for messages you sent and keeps one row per message with its date. Message text is dropped.',
+    fn: async ({ answer, call, args }) => {
+      const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+      const london = (iso) => { const p = fmt.formatToParts(new Date(iso)); const g = (t) => p.find((x) => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
+      const seen = new Set();
+      const rows = [];
+      let page = answer, pages = 1, truncated = false;
+      for (;;) {
+        if (!page || typeof page.results !== 'string') throw new Error('Slack returned no search results.');
+        const re = /Time: (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) ([A-Z]{3})\s*\nMessage_ts: ([0-9.]+)/g;
+        let m;
+        while ((m = re.exec(page.results))) {
+          if (m[3] !== 'GMT' && m[3] !== 'UTC') throw new Error(`Slack gave a time in ${m[3]}, which this page doesn't convert.`);
+          if (seen.has(m[4])) continue;
+          seen.add(m[4]);
+          rows.push({ date: london(`${m[1]}T${m[2]}Z`), workspace: 'Slack', key: m[4] });
+        }
+        const info = String(page.pagination_info || '');
+        if (/no more pages/i.test(info)) break;
+        const next = /cursor\W*([A-Za-z0-9=_-]{8,})/i.exec(info);
+        if (!next || pages >= 20) { truncated = true; break; }
+        page = await call('slack_search_public_and_private', { ...args, cursor: next[1] });
+        pages += 1;
+      }
+      return { data: rows, columns: ['date', 'workspace', 'key'], truncated, meta: [{ label: 'Pages of Slack results read', value: String(pages) }] };
+    },
+  });
+
+  // Gmail answers one page of threads at a time; read every page of the 12-week search.
+  dash.loader('sent_mail', {
+    description: 'Pages through your sent-mail search and counts, per day, emails you sent to people. Unsubscribe requests and notes to yourself are left out, and only dates and counts are kept.',
+    fn: async ({ answer, call, args }) => {
+      const mine = []; // add any other addresses of yours, lower case; the sender's own address is always left out
+      const automated = /(unsub|leave-|bounce|opt-?out|no-?reply|donotreply)/i;
+      const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+      const london = (iso) => { const p = fmt.formatToParts(new Date(iso)); const g = (t) => p.find((x) => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
+      const cutoff = Date.now() - 84 * 864e5;
+      const seen = new Set();
+      const days = new Map();
+      let page = answer, pages = 1, truncated = false;
+      for (;;) {
+        if (!page || typeof page !== 'object') throw new Error('Gmail returned no search result.');
+        if (page.error) throw new Error(typeof page.error === 'string' ? page.error : page.error.message);
+        for (const t of page.threads || []) {
+          for (const m of t.messages || []) {
+            if (seen.has(m.id) || !(m.labelIds || []).includes('SENT')) continue;
+            seen.add(m.id);
+            if (new Date(m.date).getTime() < cutoff) continue;
+            const to = [...(m.toRecipients || []), ...(m.ccRecipients || []), ...(m.bccRecipients || [])]
+              .map((a) => a.toLowerCase()).filter((a) => a !== String(m.sender || '').toLowerCase() && !mine.includes(a));
+            if (!to.length) continue;
+            if (to.every((a) => automated.test(a))) continue;
+            const d = london(m.date);
+            const row = days.get(d) || { date: d, to_people: 0 };
+            row.to_people += 1;
+            days.set(d, row);
+          }
+        }
+        if (!page.nextPageToken) break;
+        if (pages >= 40) { truncated = true; break; }
+        page = await call('search_threads', { ...args, pageToken: page.nextPageToken });
+        pages += 1;
+      }
+      const data = [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+      return { data, columns: ['date', 'to_people'], truncated, meta: [{ label: 'Pages of sent mail read', value: String(pages) }] };
+    },
+  });
+
+  // Sheets gives a grid: date | kind | label. Keep rows with a real date.
+  dash.loader('log', {
+    description: 'Turns the log sheet into one row per conversation or application, skipping the header and blank rows.',
+    fn: ({ answer }) => {
+      const values = (answer && answer.values) || [];
+      const rows = [];
+      values.slice(1).forEach(([date, kind, label]) => {
+        let d = (date || '').trim();
+        const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(d);
+        if (us) d = `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+        rows.push({ date: d, kind: (kind || '').trim(), label: (label || '').trim() });
+      });
+      return { data: rows, columns: ['date', 'kind', 'label'], cut: false };
+    },
+  });
+
+  dash.calc('weekly', {
+    inputs: ['daily'],
+    title: 'Dictation and Claude, weekly',
+    description: 'Adds up each day in Monday-to-Sunday weeks; the most sessions at once is the highest day in the week. The current week is marked partial.',
+    fn: (daily) => {
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const monday = (iso) => shift(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7));
+      const byWeek = new Map();
+      daily.forEach((d) => {
+        const m = monday(d.date);
+        const w = byWeek.get(m) || { week: m, days: 0, dictated_words: 0, dictated_words_to_ai: 0, typed_words: 0, claude_prompt_words: 0, claude_prompts: 0, claude_sessions: 0, claude_agent_hours: 0, claude_peak_parallel: 0 };
+        w.days += 1;
+        w.dictated_words += d.dictated_words;
+        w.dictated_words_to_ai += d.dictated_words_to_ai;
+        w.claude_prompt_words += d.claude_prompt_words;
+        w.typed_words += Math.max(0, d.claude_prompt_words - d.dictated_words_to_ai);
+        w.claude_prompts += d.claude_prompts;
+        w.claude_sessions += d.claude_sessions;
+        w.claude_agent_hours += d.claude_agent_hours;
+        w.claude_peak_parallel = Math.max(w.claude_peak_parallel, d.claude_peak_parallel);
+        byWeek.set(m, w);
+      });
+      return [...byWeek.values()].sort((a, b) => (a.week < b.week ? -1 : 1)).map((w) => ({
+        ...w,
+        claude_agent_hours: Math.round(w.claude_agent_hours * 10) / 10,
+        partial: w.days < 7,
+      }));
+    },
+  });
+
+  dash.calc('shippedWeekly', {
+    inputs: ['shipped'],
+    title: 'Published pieces, weekly',
+    description: 'Counts published pieces by type in each Monday-to-Sunday week over the last 26 weeks. Weeks with nothing published show as zero; this week is marked partial.',
+    fn: (shipped) => {
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const monday = (iso) => shift(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7));
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+      const today = ['year', 'month', 'day'].map((t) => parts.find((p) => p.type === t).value).join('-');
+      // Monday-to-Sunday weeks over the last 26 weeks; days = how many of the week's days are covered.
+      const weeks = (to) => {
+        const out = [];
+        for (let w = monday(shift(to, -181)); w <= to; w = shift(w, 7)) {
+          const last = shift(w, 6) > to ? to : shift(w, 6);
+          out.push({ week: w, end: shift(w, 6), days: Math.round((new Date(last) - new Date(w)) / 864e5) + 1 });
+        }
+        return out;
+      };
+      return weeks(today).map(({ week, end, days }) => {
+        const items = shipped.filter((s) => s.date >= week && s.date <= end).sort((a, b) => (a.date < b.date ? -1 : 1));
+        const count = (type) => items.filter((s) => s.type === type).length;
+        return { week, partial: days < 7, video: count('video'), post: count('post'), paper: count('paper') + count('op-ed'), titles: items.map((s) => s.title).join('\n') };
+      });
+    },
+  });
+
+  dash.calc('shipped28', {
+    inputs: ['shipped'],
+    title: 'Published, last 28 days vs the 28 before',
+    description: 'Pieces published in the 28 days to today and in the 28 days before.',
+    fn: (shipped) => {
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const monday = (iso) => shift(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7));
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+      const today = ['year', 'month', 'day'].map((t) => parts.find((p) => p.type === t).value).join('-');
+      // Totals over the 28 days ending `end` and the 28 days before them.
+      const window28 = (rows, end, value) => {
+        const curFrom = shift(end, -27), prevFrom = shift(end, -55);
+        let now = 0, before = 0;
+        rows.forEach((r) => {
+          if (r.date >= curFrom && r.date <= end) now += value(r);
+          else if (r.date >= prevFrom && r.date < curFrom) before += value(r);
+        });
+        const r1 = (v) => Math.round(v * 10) / 10;
+        return { now: r1(now), before: r1(before), change: r1(r1(now) - r1(before)) };
+      };
+      return [{ metric: 'published', ...window28(shipped, today, () => 1) }];
+    },
+  });
+
+  dash.calc('logWeekly', {
+    inputs: ['log'],
+    title: 'Conversations and applications, weekly',
+    description: 'Counts each kind of log row in Monday-to-Sunday weeks over the last 26 weeks. Empty while the log has no rows.',
+    fn: (log) => {
+      if (!log.length) return [];
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const monday = (iso) => shift(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7));
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+      const today = ['year', 'month', 'day'].map((t) => parts.find((p) => p.type === t).value).join('-');
+      // Monday-to-Sunday weeks over the last 26 weeks; days = how many of the week's days are covered.
+      const weeks = (to) => {
+        const out = [];
+        for (let w = monday(shift(to, -181)); w <= to; w = shift(w, 7)) {
+          const last = shift(w, 6) > to ? to : shift(w, 6);
+          out.push({ week: w, end: shift(w, 6), days: Math.round((new Date(last) - new Date(w)) / 864e5) + 1 });
+        }
+        return out;
+      };
+      return weeks(today).map(({ week, end, days }) => {
+        const items = log.filter((r) => r.date >= week && r.date <= end).sort((a, b) => (a.date < b.date ? -1 : 1));
+        const count = (kind) => items.filter((r) => r.kind === kind).length;
+        return {
+          week, partial: days < 7,
+          outside: count('conversation_external'),
+          inside: count('conversation_internal'),
+          applications: count('application'),
+          labels: items.map((r) => r.label + (r.kind === 'application' ? ' (application)' : '')).join('\n'),
+        };
+      });
+    },
+  });
+
+  dash.calc('log28', {
+    inputs: ['log'],
+    title: 'Conversations and applications, last 28 days vs the 28 before',
+    description: 'Conversations of both kinds, and applications, in the 28 days to today and the 28 days before. Blank while the log has no rows.',
+    fn: (log) => {
+      if (!log.length) return [{ metric: 'conversations', now: null, before: null, change: null }, { metric: 'applications', now: null, before: null, change: null }];
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const monday = (iso) => shift(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7));
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+      const today = ['year', 'month', 'day'].map((t) => parts.find((p) => p.type === t).value).join('-');
+      // Totals over the 28 days ending `end` and the 28 days before them.
+      const window28 = (rows, end, value) => {
+        const curFrom = shift(end, -27), prevFrom = shift(end, -55);
+        let now = 0, before = 0;
+        rows.forEach((r) => {
+          if (r.date >= curFrom && r.date <= end) now += value(r);
+          else if (r.date >= prevFrom && r.date < curFrom) before += value(r);
+        });
+        const r1 = (v) => Math.round(v * 10) / 10;
+        return { now: r1(now), before: r1(before), change: r1(r1(now) - r1(before)) };
+      };
+      return [
+        { metric: 'conversations', ...window28(log, today, (r) => (r.kind.startsWith('conversation_') ? 1 : 0)) },
+        { metric: 'applications', ...window28(log, today, (r) => (r.kind === 'application' ? 1 : 0)) },
+      ];
+    },
+  });
+
+  dash.calc('commitsWeekly', {
+    inputs: ['commits'],
+    title: 'Commits, weekly',
+    description: 'Adds your commits in Monday-to-Sunday weeks over the last 26 weeks, with the repos behind each week. This week is marked partial.',
+    fn: (commits) => {
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const monday = (iso) => shift(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7));
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+      const today = ['year', 'month', 'day'].map((t) => parts.find((p) => p.type === t).value).join('-');
+      const out = [];
+      for (let week = monday(shift(today, -181)); week <= today; week = shift(week, 7)) {
+        const end = shift(week, 6);
+        const byRepo = new Map();
+        commits.filter((c) => c.date >= week && c.date <= end).forEach((c) => {
+          const name = c.repo.split('/').pop();
+          byRepo.set(name, (byRepo.get(name) || 0) + c.commits);
+        });
+        const repos = [...byRepo.entries()].sort((a, b) => b[1] - a[1]);
+        out.push({ week, partial: end > today, commits: repos.reduce((a, r) => a + r[1], 0), repos: repos.map(([n, c]) => `${n}: ${c}`).join('\n') });
+      }
+      return out;
+    },
+  });
+
+  dash.calc('mailWeekly', {
+    inputs: ['sent_mail'],
+    title: 'Emails sent to people, weekly',
+    description: 'Adds emails you sent to people in Monday-to-Sunday weeks, from the first whole week of the 12-week search to this week. This week is marked partial.',
+    fn: (sentMail) => {
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const monday = (iso) => shift(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7));
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+      const today = ['year', 'month', 'day'].map((t) => parts.find((p) => p.type === t).value).join('-');
+      const first = shift(today, -83);
+      const start = monday(first) === first ? first : shift(monday(first), 7);
+      const out = [];
+      for (let week = start; week <= today; week = shift(week, 7)) {
+        const end = shift(week, 6);
+        const items = sentMail.filter((r) => r.date >= week && r.date <= end);
+        out.push({
+          week, partial: end > today,
+          to_people: items.reduce((a, r) => a + r.to_people, 0),
+        });
+      }
+      return out;
+    },
+  });
+
+  dash.calc('slackWeekly', {
+    inputs: ['slack_sent'],
+    title: 'Slack messages sent, weekly',
+    description: 'Adds the Slack messages you sent in Monday-to-Sunday weeks over the same 12 weeks as the email chart. This week is marked partial.',
+    fn: (slackSent) => {
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const monday = (iso) => shift(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7));
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+      const today = ['year', 'month', 'day'].map((t) => parts.find((p) => p.type === t).value).join('-');
+      const first = shift(today, -83);
+      const start = monday(first) === first ? first : shift(monday(first), 7);
+      const out = [];
+      for (let week = start; week <= today; week = shift(week, 7)) {
+        const end = shift(week, 6);
+        out.push({ week, partial: end > today, slack: slackSent.filter((r) => r.date >= week && r.date <= end).length, workspaces: '' });
+      }
+      return out;
+    },
+  });
+
+  dash.calc('rtWeekly', {
+    inputs: ['rescuetime'],
+    title: 'Distracting time and social media, weekly',
+    description: 'Adds RescueTime hours in Monday-to-Sunday weeks, from the first whole week RescueTime has data for up to the last day in the file (yesterday). The current week is marked partial.',
+    fn: (rescuetime) => {
+      if (!rescuetime.length) return [];
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const monday = (iso) => shift(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7));
+      // Monday-to-Sunday weeks over the last 26 weeks; days = how many of the week's days are covered.
+      const weeks = (to) => {
+        const out = [];
+        for (let w = monday(shift(to, -181)); w <= to; w = shift(w, 7)) {
+          const last = shift(w, 6) > to ? to : shift(w, 6);
+          out.push({ week: w, end: shift(w, 6), days: Math.round((new Date(last) - new Date(w)) / 864e5) + 1 });
+        }
+        return out;
+      };
+      const dates = rescuetime.map((r) => r.date).sort();
+      const first = dates[0], last = dates[dates.length - 1];
+      // Start at the first Monday on or after RescueTime's first day, so no week is only partly covered.
+      const start = monday(first) === first ? first : shift(monday(first), 7);
+      const r1 = (v) => Math.round(v * 10) / 10;
+      return weeks(last).filter(({ week }) => week >= start).map(({ week, end, days }) => {
+        const items = rescuetime.filter((r) => r.date >= week && r.date <= end);
+        return {
+          week, partial: days < 7,
+          distracting_hours: r1(items.reduce((a, r) => a + r.distracting_hours, 0)),
+          social_hours: r1(items.reduce((a, r) => a + r.social_hours, 0)),
+        };
+      });
+    },
+  });
+
+  dash.calc('rt7', {
+    inputs: ['rescuetime'],
+    title: 'Distracting time, last 7 days vs the 7 before',
+    description: 'RescueTime hours rated distracting in the 7 days to the last day in the file, and the 7 days before. Blank until RescueTime has 14 days of data.',
+    fn: (rescuetime) => {
+      const blank = [{ metric: 'distracting_hours', now: null, before: null, change: null }];
+      if (!rescuetime.length) return blank;
+      const shift = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+      const dates = rescuetime.map((r) => r.date).sort();
+      const first = dates[0], last = dates[dates.length - 1];
+      if (first > shift(last, -13)) return blank;
+      const curFrom = shift(last, -6), prevFrom = shift(last, -13);
+      let now = 0, before = 0;
+      rescuetime.forEach((r) => {
+        if (r.date >= curFrom && r.date <= last) now += r.distracting_hours;
+        else if (r.date >= prevFrom && r.date < curFrom) before += r.distracting_hours;
+      });
+      const r1 = (v) => Math.round(v * 10) / 10;
+      return [{ metric: 'distracting_hours', now: r1(now), before: r1(before), change: r1(r1(now) - r1(before)) }];
+    },
+  });
+</script>
+
+<script>
+  // Headline numbers. Each reads one calc; '—' while it has no row.
+  const putNumber = (src, name, field, fmt, goodWhenUp) => (el) => {
+    const s = dash.data(src);
+    el.classList.toggle('dash-skeleton', s.status === 'loading');
+    const r = s.status === 'ok' && Array.isArray(s.data) ? s.data.find((x) => x.metric === name) : null;
+    const v = r ? r[field] : null;
+    if (v === null || v === undefined) { el.textContent = '—'; el.classList.remove('nt-good', 'nt-bad'); return; }
+    if (field === 'change') {
+      el.textContent = NT.signed(v, fmt);
+      el.classList.toggle('nt-good', goodWhenUp !== null && v !== 0 && (v > 0) === goodWhenUp);
+      el.classList.toggle('nt-bad', goodWhenUp !== null && v !== 0 && (v > 0) !== goodWhenUp);
+    } else {
+      el.textContent = fmt(v);
+    }
+  };
+  dash.draw('ledePublished', putNumber('shipped28', 'published', 'now', NT.num));
+  dash.draw('ledeTalks', putNumber('log28', 'conversations', 'now', NT.num));
+  dash.draw('ledeApps', putNumber('log28', 'applications', 'now', NT.num));
+  dash.draw('kpiPublished', putNumber('shipped28', 'published', 'now', NT.num));
+  dash.draw('chgPublished', putNumber('shipped28', 'published', 'change', NT.num, true));
+  dash.draw('kpiTalks', putNumber('log28', 'conversations', 'now', NT.num));
+  dash.draw('chgTalks', putNumber('log28', 'conversations', 'change', NT.num, true));
+  dash.draw('kpiApps', putNumber('log28', 'applications', 'now', NT.num));
+  dash.draw('chgApps', putNumber('log28', 'applications', 'change', NT.num, true));
+  dash.draw('kpiDistracting', putNumber('rt7', 'distracting_hours', 'now', NT.dec));
+  dash.draw('chgDistracting', putNumber('rt7', 'distracting_hours', 'change', NT.dec, false));
+</script>
+
+<script>
+  const weekHead = (r) => 'Week of ' + NT.day(NT.parseDay(r.week)) + (r.partial ? ' (so far)' : '');
+  const titleLines = (text, max) => {
+    const all = text ? text.split('\n') : [];
+    const out = all.slice(0, max).map((t) => [t, undefined, true]);
+    if (all.length > max) out.push(['+' + (all.length - max) + ' more', undefined, true]);
+    return out;
+  };
+
+  dash.draw('publishedChart', (el) => {
+    const s = NT.state(el, 'shippedWeekly');
+    if (!s) return;
+    NT.bars(el, s.data, [
+      { key: 'video', label: 'Videos', color: 'var(--nt-c0)' },
+      { key: 'post', label: 'Posts', color: 'var(--nt-c1)' },
+      { key: 'paper', label: 'Papers and articles', color: 'var(--nt-c2)' },
+    ], {
+      label: 'Stacked bar chart of videos, posts, and papers and articles published each week over the last 26 weeks',
+      yFmt: d3.format('d'), integer: true,
+      tip: (r) => ({
+        head: weekHead(r),
+        lines: [['Videos', NT.num(r.video)], ['Posts', NT.num(r.post)], ['Papers and articles', NT.num(r.paper)], ...titleLines(r.titles, 4)],
+      }),
+    });
+  });
+
+  dash.draw('publishedList', (el) => {
+    const s = NT.state(el, 'shipped');
+    if (!s) return;
+    el.replaceChildren();
+    const names = { video: 'Video', post: 'Post', paper: 'Paper', 'op-ed': 'Article' };
+    [...s.data].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 6).forEach((r) => {
+      const li = document.createElement('li');
+      const when = document.createElement('span');
+      when.className = 'nt-when';
+      when.textContent = NT.day(NT.parseDay(r.date));
+      const type = document.createElement('span');
+      type.className = 'nt-type';
+      type.textContent = names[r.type] || r.type;
+      const a = document.createElement('a');
+      a.href = r.url; a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = r.title;
+      a.title = r.title;
+      li.append(when, type, a);
+      el.appendChild(li);
+    });
+  });
+
+  dash.draw('codeChart', (el) => {
+    const s = NT.state(el, 'commitsWeekly');
+    if (!s) return;
+    NT.lines(el, s.data.map((w) => ({ ...w, x: NT.parseDay(w.week) })), [{ key: 'commits', label: 'Commits', color: 'var(--nt-c0)' }], {
+      height: 200,
+      label: 'Line chart of commits to your repos each week over the last 26 weeks',
+      yFmt: d3.format('d'), integer: true,
+      tip: (r) => ({ head: weekHead(r), lines: [['Commits', NT.num(r.commits)], ...titleLines(r.repos, 5)] }),
+    });
+  });
+
+  dash.draw('mailChart', (el) => {
+    const s = NT.state(el, 'mailWeekly');
+    if (!s) return;
+    const sl = dash.data('slackWeekly');
+    const slack = sl.status === 'ok' && Array.isArray(sl.data) ? new Map(sl.data.map((w) => [w.week, w])) : null;
+    const rows = s.data.map((w) => {
+      const k = slack && slack.get(w.week);
+      return { ...w, x: NT.parseDay(w.week), slack: k ? k.slack : null, workspaces: k ? k.workspaces : '' };
+    });
+    const series = [{ key: 'to_people', label: 'Emails to people', color: 'var(--nt-c0)' }];
+    if (slack) series.push({ key: 'slack', label: 'Slack messages', color: 'var(--nt-c1)' });
+    NT.lines(el, rows, series, {
+      height: 200,
+      label: 'Line chart of emails you sent to people and Slack messages you sent, each week over the last 12 weeks',
+      yFmt: d3.format('d'), integer: true,
+      tip: (r) => ({
+        head: weekHead(r),
+        lines: [
+          ['Emails to people', NT.num(r.to_people)],
+          ['Slack messages', r.slack == null ? 'not counted yet' : NT.num(r.slack)],
+          ...titleLines(r.workspaces, 5),
+        ],
+      }),
+    });
+    if (!slack && sl.status !== 'loading') {
+      const p = document.createElement('div');
+      p.className = 'nt-fail';
+      p.textContent = sl.status === 'connect' ? "Slack messages appear once this dashboard can use Slack." : "Slack messages didn't load.";
+      el.appendChild(p);
+    }
+  });
+
+  dash.draw('talksChart', (el) => {
+    const s = NT.state(el, 'logWeekly');
+    if (!s) return;
+    if (!s.data.length) { NT.note(el, 'The log is empty so far. It fills from a daily routine; see the notes below.'); return; }
+    NT.bars(el, s.data, [
+      { key: 'outside', label: 'Outside your organization', color: 'var(--nt-c0)' },
+      { key: 'inside', label: 'Colleagues in your field', color: 'var(--nt-c1)' },
+      { key: 'applications', label: 'Applications', color: 'var(--nt-c2)' },
+    ], {
+      label: 'Stacked bar chart of conversations in your field and applications each week over the last 26 weeks',
+      yFmt: d3.format('d'), integer: true,
+      tip: (r) => ({
+        head: weekHead(r),
+        lines: [['Outside your organization', NT.num(r.outside)], ['Colleagues in your field', NT.num(r.inside)], ['Applications', NT.num(r.applications)], ...titleLines(r.labels, 5)],
+      }),
+    });
+  });
+
+  dash.draw('attentionChart', (el) => {
+    const s = NT.state(el, 'rtWeekly');
+    if (!s) return;
+    if (!s.data.length) { NT.note(el, 'No RescueTime data yet. It starts once the RescueTime API key is in 1Password.'); return; }
+    NT.lines(el, s.data.map((w) => ({ ...w, x: NT.parseDay(w.week) })), [
+      { key: 'distracting_hours', label: 'All distracting', color: 'var(--nt-c0)' },
+      { key: 'social_hours', label: 'Social media', color: 'var(--nt-c1)' },
+    ], {
+      height: 200,
+      label: 'Line chart of hours on distracting sites and apps, and on social media, each week',
+      yFmt: (v) => v + 'h',
+      tip: (r) => ({ head: weekHead(r), lines: [['All distracting', NT.dec(r.distracting_hours) + ' h'], ['Social media', NT.dec(r.social_hours) + ' h']] }),
+    });
+  });
+
+  dash.draw('leverageChart', (el) => {
+    const s = NT.state(el, 'weekly');
+    if (!s) return;
+    const rows = s.data.filter((w) => w.claude_prompts >= 5)
+      .map((w) => ({ ...w, x: NT.parseDay(w.week), min_per_prompt: Math.round((60 * w.claude_agent_hours / w.claude_prompts) * 10) / 10 }));
+    if (rows.length < 2) { NT.note(el, 'Not enough weeks with Claude prompts yet.'); return; }
+    NT.lines(el, rows, [{ key: 'min_per_prompt', label: 'Minutes per prompt', color: 'var(--nt-c0)' }], {
+      height: 200,
+      label: 'Line chart of minutes Claude worked per prompt you wrote, each week',
+      yFmt: (v) => v + 'm',
+      tip: (r) => ({
+        head: weekHead(r),
+        lines: [
+          ['Claude minutes per prompt', NT.dec(r.min_per_prompt)],
+          ['Claude worked', NT.dec(r.claude_agent_hours) + ' h'],
+          ['Prompts you wrote', NT.num(r.claude_prompts)],
+          ['Words you typed', NT.num(r.typed_words), true],
+        ],
+      }),
+    });
+  });
+
+  dash.draw('voiceChart', (el) => {
+    const s = NT.state(el, 'weekly');
+    if (!s) return;
+    const rows = s.data.map((w) => ({ ...w, x: NT.parseDay(w.week) }));
+    NT.lines(el, rows, [
+      { key: 'typed_words', label: 'Typed to Claude', color: 'var(--nt-c0)' },
+      { key: 'dictated_words', label: 'Dictated', color: 'var(--nt-c1)' },
+    ], {
+      label: 'Line chart of words typed to Claude and words dictated in each week',
+      yFmt: d3.format('~s'),
+      tip: (r) => ({
+        head: weekHead(r),
+        lines: [
+          ['Typed to Claude', NT.num(r.typed_words) + ' words'],
+          ['Dictated', NT.num(r.dictated_words) + ' words'],
+          ['Dictated into AI apps', NT.num(r.dictated_words_to_ai) + ' words', true],
+        ],
+      }),
+    });
+  });
+
+  dash.draw('delegationChart', (el) => {
+    const s = NT.state(el, 'weekly');
+    if (!s) return;
+    const first = s.data.findIndex((w) => w.claude_prompts > 0);
+    const rows = s.data.slice(Math.max(0, first));
+    NT.lines(el, rows.map((w) => ({ ...w, x: NT.parseDay(w.week) })), [{ key: 'claude_agent_hours', label: 'Hours', color: 'var(--nt-c0)' }], {
+      height: 200,
+      label: 'Line chart of hours Claude spent working for you in each week',
+      yFmt: (v) => v + 'h',
+      tip: (r) => ({
+        head: weekHead(r),
+        lines: [
+          ['Claude worked', NT.dec(r.claude_agent_hours) + ' h'],
+          ['Prompts you wrote', NT.num(r.claude_prompts)],
+          ['Sessions', NT.num(r.claude_sessions)],
+          ['Most running at once', NT.num(r.claude_peak_parallel), true],
+        ],
+      }),
+    });
+  });
+</script>
+
+</div>
+</body>
+</html>

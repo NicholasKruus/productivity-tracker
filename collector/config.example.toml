@@ -1,0 +1,49 @@
+# Copy to config.toml (git-ignored) and edit. Every source is off until you
+# switch it on.
+
+# Where the CSV files go: a folder Google Drive syncs, so the dashboard can read
+# them through the Google Drive connector.
+out_dir = "~/Library/CloudStorage/GoogleDrive-you@example.com/My Drive/Productivity tracker"
+start = "2026-06-01"          # first day to count
+timezone = "Europe/London"    # dates and weeks are in this zone
+
+[dictation]                   # superwhisper (https://superwhisper.com)
+enabled = false
+# Apps where dictated words become prompts to an AI agent.
+ai_apps = ["Claude", "Warp", "Terminal", "iTerm2", "ChatGPT", "Codex", "Code", "Cursor"]
+# Apps whose recordings aren't dictation (games with voice chat, for example).
+ignore_apps = []
+
+[claude_code]                 # Claude Code transcripts in ~/.claude/projects
+enabled = false
+idle_gap_minutes = 15         # a longer gap inside a turn stops Claude's clock
+freeze_after_days = 20        # Claude Code deletes transcripts after 30 days
+
+[published]                   # finished public work, from public feeds
+enabled = false
+youtube_channels = []         # channel ids, like "UCxxxxxxxxxxxxxxxxxxxxxx"
+# Any RSS or Atom feed. type is how it's grouped on the dashboard: video, post or paper.
+feeds = [
+  # { url = "https://yourname.substack.com/feed", type = "post" },
+  # { url = "https://yourblog.example/papers.xml", type = "paper" },
+]
+exclude_links = []            # items you don't want counted
+
+[commits]                     # git history of repos on this Mac
+enabled = false
+author_emails = ["you@example.com"]
+# Matches the Mac's default git identity, like "yourname@Your-Mac.local".
+author_email_prefixes = []    # e.g. ["yourname@"]
+roots = ["~"]
+depth = 3
+# macOS asks before a background job reads Desktop, Documents or Downloads.
+skip_dirs = ["Library", "Desktop", "Documents", "Downloads", "node_modules"]
+
+[rescuetime]                  # https://www.rescuetime.com/anapi/manage for a key
+enabled = false
+# A .env next to this file with RESCUETIME_API_KEY=... Best kept in a secrets
+# manager that mounts it, such as a 1Password Environment.
+env_file = ".env"
+# RescueTime categories that count as social media.
+social_categories = ["General Social Networking"]
+refetch_days = 10
