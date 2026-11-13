@@ -1,7 +1,7 @@
 <meta name="dash-one-writer">
 <style>
-  /* Look of ai-automations-db.vercel.app: white paper, near-black ink, #007fff accent,
-     heavy uppercase Inter Tight headings, IBM Plex Mono labels, hairline rules. */
+  /* White paper, near-black ink, #007fff accent, heavy uppercase Inter Tight
+     headings, IBM Plex Mono labels, hairline rules. Fonts fall back to the system's. */
   #dash-root { --dash-gutter: 0; }
   .nt {
     --k-ink: #0b0f17; --k-paper: #ffffff; --k-muted: #535a67;
@@ -98,7 +98,7 @@
   <section class="nt-sec" id="published">
     <p class="nt-idx">01 / Published</p>
     <h2>What you published, per week</h2>
-    <p class="nt-why">Each finished public piece counts once, however many platforms it went to, and a short clip counts the same as a long paper. A paler bar is the week so far.</p>
+    <p class="nt-why">Each item in your feeds counts once, and a short clip counts the same as a long paper. A paler bar is the week so far.</p>
     <div class="nt-legend" aria-hidden="true">
       <span class="nt-key"><span class="nt-swatch-box" style="background: var(--nt-c0)"></span>Videos</span>
       <span class="nt-key"><span class="nt-swatch-box" style="background: var(--nt-c1)"></span>Posts</span>
@@ -195,7 +195,7 @@
 <script>
   // Shared drawing helpers. Every chart is redrawn from scratch on each call.
   window.NT = (() => {
-    // Series colors are set in the page's CSS (--nt-c0..2) to match ai-automations-db.
+    // Series colors are set in the page's CSS (--nt-c0..2).
     const num = d3.format(',');
     const dec = d3.format(',.1~f');
     const day = d3.utcFormat('%-d %b');
@@ -525,7 +525,7 @@
     description: 'Reads the Slack search for messages you sent and keeps one row per message with its date. Message text is dropped.',
     fn: async ({ answer, call, args }) => {
       const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
-      const london = (iso) => { const p = fmt.formatToParts(new Date(iso)); const g = (t) => p.find((x) => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
+      const localDate = (iso) => { const p = fmt.formatToParts(new Date(iso)); const g = (t) => p.find((x) => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
       const seen = new Set();
       const rows = [];
       let page = answer, pages = 1, truncated = false;
@@ -537,10 +537,12 @@
           if (m[3] !== 'GMT' && m[3] !== 'UTC') throw new Error(`Slack gave a time in ${m[3]}, which this page doesn't convert.`);
           if (seen.has(m[4])) continue;
           seen.add(m[4]);
-          rows.push({ date: london(`${m[1]}T${m[2]}Z`), workspace: 'Slack', key: m[4] });
+          rows.push({ date: localDate(`${m[1]}T${m[2]}Z`), workspace: 'Slack', key: m[4] });
         }
         const info = String(page.pagination_info || '');
         if (/no more pages/i.test(info)) break;
+        const oldest = rows.reduce((a, r) => (r.date < a ? r.date : a), '9999-12-31');
+        if (oldest < new Date(Date.now() - 84 * 864e5).toISOString().slice(0, 10)) break; // the chart shows 12 weeks
         const next = /cursor\W*([A-Za-z0-9=_-]{8,})/i.exec(info);
         if (!next || pages >= 20) { truncated = true; break; }
         page = await call('slack_search_public_and_private', { ...args, cursor: next[1] });
@@ -557,7 +559,7 @@
       const mine = []; // add any other addresses of yours, lower case; the sender's own address is always left out
       const automated = /(unsub|leave-|bounce|opt-?out|no-?reply|donotreply)/i;
       const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
-      const london = (iso) => { const p = fmt.formatToParts(new Date(iso)); const g = (t) => p.find((x) => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
+      const localDate = (iso) => { const p = fmt.formatToParts(new Date(iso)); const g = (t) => p.find((x) => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
       const cutoff = Date.now() - 84 * 864e5;
       const seen = new Set();
       const days = new Map();
@@ -574,7 +576,7 @@
               .map((a) => a.toLowerCase()).filter((a) => a !== String(m.sender || '').toLowerCase() && !mine.includes(a));
             if (!to.length) continue;
             if (to.every((a) => automated.test(a))) continue;
-            const d = london(m.date);
+            const d = localDate(m.date);
             const row = days.get(d) || { date: d, to_people: 0 };
             row.to_people += 1;
             days.set(d, row);
@@ -596,13 +598,16 @@
     fn: ({ answer }) => {
       const values = (answer && answer.values) || [];
       const rows = [];
-      values.slice(1).forEach(([date, kind, label]) => {
-        let d = (date || '').trim();
-        const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(d);
-        if (us) d = `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`;
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+      const bad = [];
+      values.slice(1).forEach(([date, kind, label], i) => {
+        const d = (date || '').trim();
+        if (!d) return; // blank row
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { bad.push(i + 2); return; }
         rows.push({ date: d, kind: (kind || '').trim(), label: (label || '').trim() });
       });
+      // A date like 05/11/2026 means different days in different locales, so it is
+      // refused rather than guessed. Format the date column as plain text.
+      if (bad.length) throw new Error(`Log rows ${bad.slice(0, 5).join(', ')} have a date that isn't YYYY-MM-DD.`);
       return { data: rows, columns: ['date', 'kind', 'label'], cut: false };
     },
   });
@@ -941,7 +946,7 @@
       type.className = 'nt-type';
       type.textContent = names[r.type] || r.type;
       const a = document.createElement('a');
-      a.href = r.url; a.target = '_blank'; a.rel = 'noopener';
+      if (/^https?:\/\//i.test(r.url || '')) { a.href = r.url; a.target = '_blank'; a.rel = 'noopener noreferrer'; }
       a.textContent = r.title;
       a.title = r.title;
       li.append(when, type, a);
@@ -1013,7 +1018,7 @@
   dash.draw('attentionChart', (el) => {
     const s = NT.state(el, 'rtWeekly');
     if (!s) return;
-    if (!s.data.length) { NT.note(el, 'No RescueTime data yet. It starts once the RescueTime API key is in 1Password.'); return; }
+    if (!s.data.length) { NT.note(el, 'No RescueTime data yet. It starts once the collector has a RescueTime key; see the README.'); return; }
     NT.lines(el, s.data.map((w) => ({ ...w, x: NT.parseDay(w.week) })), [
       { key: 'distracting_hours', label: 'All distracting', color: 'var(--nt-c0)' },
       { key: 'social_hours', label: 'Social media', color: 'var(--nt-c1)' },

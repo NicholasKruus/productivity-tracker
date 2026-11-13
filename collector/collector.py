@@ -17,8 +17,8 @@ Sources, each switched on in config.toml:
 - rescuetime:  RescueTime's API, hours per day on distracting sites and apps,
                and on social media.
 
-From your own Mac data it writes counts only, never text or titles. Published
-items are public, so their titles and links are kept.
+From your own Mac data it writes counts, dates and repo folder names, never
+text you wrote. Published items are public, so their titles and links are kept.
 
 Usage:
     python3 collector.py                      # uses config.toml next to this file
@@ -38,6 +38,11 @@ import re
 import sqlite3
 import subprocess
 import sys
+
+if sys.version_info < (3, 11):
+    sys.exit("collector.py needs Python 3.11 or newer (macOS's own /usr/bin/python3 is 3.9). "
+             "Install one with Homebrew: brew install python")
+
 import tomllib
 import urllib.error
 import urllib.parse
@@ -56,6 +61,15 @@ END_PADDING = "." * 400
 SUPERWHISPER_DB = os.path.join(HOME, "Library/Application Support/superwhisper/database/superwhisper.sqlite")
 CLAUDE_PROJECTS = os.path.join(HOME, ".claude/projects")
 GIT = "/usr/bin/git"
+# A repo's own config can name programs for git to run (a signature checker, or a
+# remote to fetch missing objects from). These settings stop that, so reading
+# history never runs code from a repo or reaches the network.
+GIT_ARGS = [GIT, "-c", "log.showSignature=false", "-c", "core.fsmonitor=false"]
+GIT_ENV = {**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat"}
+# Never searched for repos: macOS guards some of these (a background job reading
+# them triggers a permission prompt), and the rest hold no repos of yours.
+ALWAYS_SKIP = {"Library", "Desktop", "Documents", "Downloads", "Pictures", "Movies", "Music",
+               "Applications", "node_modules"}
 RESCUETIME_API = "https://www.rescuetime.com/anapi/data"
 
 # Text in a prompt that you didn't type: pastes, system text, command output, code.
@@ -97,13 +111,28 @@ def write_csv(path, header, rows):
         fh.write(f"# end rows={len(rows)} written={written}\n# {END_PADDING}\n")
 
 
+class StoredFileError(Exception):
+    """A file this script wrote earlier looks cut or edited; rewriting it would lose history."""
+
+
 def read_csv(path, key):
-    """Rows of a file this script wrote, keyed by one column."""
+    """Rows of a file this script wrote, keyed by one column.
+
+    The file must end with the end line write_csv adds, with the right row count.
+    Otherwise it was cut (for example mid-sync) and is refused, so the caller
+    doesn't overwrite stored history with a partial copy.
+    """
     if not os.path.exists(path):
         return {}
     with open(path, newline="") as fh:
-        lines = [line for line in fh if not line.startswith("#")]
-    return {r[key]: r for r in csv.DictReader(lines)}
+        text = fh.read()
+    m = re.search(r"^# end rows=(\d+) ", text, re.M)
+    lines = [line for line in text.splitlines(keepends=True) if not line.startswith("#")]
+    rows = list(csv.DictReader(lines))
+    if not m or int(m.group(1)) != len(rows):
+        raise StoredFileError(f"{os.path.basename(path)} looks cut or edited (end line missing or wrong "
+                              "row count); not overwriting it. Restore it from Drive's version history.")
+    return {r[key]: r for r in rows}
 
 
 def written_at(path):
@@ -117,10 +146,28 @@ def written_at(path):
     return None
 
 
-def fetch(url, headers=None):
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib would send an Authorization header on to any redirect target."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, f"refused redirect to {newurl}", headers, fp)
+
+
+def fetch(url, headers=None, follow_redirects=True):
     req = urllib.request.Request(url, headers={"User-Agent": "productivity-tracker", **(headers or {})})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    opener = urllib.request.build_opener() if follow_redirects else urllib.request.build_opener(_NoRedirect)
+    with opener.open(req, timeout=30) as resp:
         return resp.read()
+
+
+def web_link(link):
+    """The link if it is http(s), else None: a feed could carry javascript: or file: links."""
+    link = (link or "").strip()
+    return link if urllib.parse.urlsplit(link).scheme in ("http", "https") else None
+
+
+def one_line(text):
+    """Collapse whitespace, so a title can't break a CSV row or fake the end line."""
+    return " ".join((text or "").split())
 
 
 def days_between(start, end):
@@ -130,23 +177,31 @@ def days_between(start, end):
 # ---------- dictation (superwhisper) ----------
 
 def dictation_by_day(cfg, sec):
-    """superwhisper stores datetime as UTC text and duration in milliseconds."""
-    days = collections.defaultdict(collections.Counter)
+    """Per local day: dictations, words, seconds, words into AI apps. None if unreadable.
+
+    superwhisper stores datetime as UTC text and duration in milliseconds.
+    """
     if not os.path.exists(SUPERWHISPER_DB):
-        print("dictation: superwhisper database not found", file=sys.stderr)
-        return days
+        return None
     ai_apps, ignore = set(sec.get("ai_apps", [])), set(sec.get("ignore_apps", []))
-    con = sqlite3.connect(f"file:{SUPERWHISPER_DB}?mode=ro", uri=True)
     try:
-        rows = con.execute(
-            "select datetime, appName, wordCount, duration from recording_stat_lines "
-            "where kind = 'dictation' and fromFile = 0").fetchall()
-    finally:
-        con.close()
+        con = sqlite3.connect(f"file:{SUPERWHISPER_DB}?mode=ro", uri=True)
+        try:
+            rows = con.execute(
+                "select datetime, appName, wordCount, duration from recording_stat_lines "
+                "where kind = 'dictation' and fromFile = 0").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None  # schema changed or database locked: keep what is stored
+    days = collections.defaultdict(collections.Counter)
     for when, app, n_words, duration_ms in rows:
         if app in ignore:
             continue
-        t = dt.datetime.fromisoformat(when).replace(tzinfo=dt.timezone.utc).astimezone(cfg.tz)
+        try:
+            t = dt.datetime.fromisoformat(when).replace(tzinfo=dt.timezone.utc).astimezone(cfg.tz)
+        except (TypeError, ValueError):
+            continue  # a row without a usable date is skipped, not fatal
         d = days[t.date()]
         d["dictations"] += 1
         d["words"] += n_words or 0
@@ -183,8 +238,14 @@ def words(text):
     return len(WORD.findall(text))
 
 
-def claude_sessions(cfg, idle_gap):
-    """Yield (prompts, turns) per transcript: prompts are (time, words), turns (start, end)."""
+def claude_sessions(idle_gap):
+    """Yield (prompts, spans) per transcript, in UTC.
+
+    prompts: (time, words) for each prompt you wrote. spans: (start, end) stretches
+    when Claude was working: from a prompt to its last step, split wherever nothing
+    happened for longer than idle_gap (Claude waiting on you), and picked up again
+    when work resumes. Times stay in UTC so durations are right across DST changes.
+    """
     files = sorted(glob.glob(os.path.join(CLAUDE_PROJECTS, "**/*.jsonl"), recursive=True))
     # A resumed or forked session starts its new file with a copy of the earlier
     # conversation, so each entry counts once, in the first file it appears in.
@@ -199,64 +260,66 @@ def claude_sessions(cfg, idle_gap):
                     continue
                 try:
                     entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                ts = entry.get("timestamp")
-                if not ts or entry.get("type") not in ("user", "assistant", "system"):
+                    ts = entry.get("timestamp")
+                    if not ts or entry.get("type") not in ("user", "assistant", "system"):
+                        continue
+                    t = dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
+                except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
                     continue
                 uid = entry.get("uuid")
                 if uid:
                     if uid in seen:
                         continue
                     seen.add(uid)
-                t = dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(cfg.tz)
                 text = human_text(entry)
                 events.append((t, text is not None, words(text) if text else 0))
         if not events:
             continue
         events.sort(key=lambda e: e[0])
         prompts = [(t, w) for t, is_prompt, w in events if is_prompt]
-        turns, start, last = [], None, None
+        spans, start, last = [], None, None
         for t, is_prompt, _ in events:
             if is_prompt:
                 if start is not None and last > start:
-                    turns.append((start, last))
+                    spans.append((start, last))
                 start = last = t
             elif start is not None:
-                if t - last > idle_gap:  # Claude was waiting, e.g. on a permission prompt
+                if t - last > idle_gap:  # Claude waited (a permission prompt, say); resume the clock here
                     if last > start:
-                        turns.append((start, last))
-                    start = None
-                else:
-                    last = t
+                        spans.append((start, last))
+                    start = t
+                last = t
         if start is not None and last > start:
-            turns.append((start, last))
-        yield prompts, turns
+            spans.append((start, last))
+        yield prompts, spans
 
 
 def claude_by_day(cfg, sec):
+    """Per local day: prompts, words, sessions, Claude's working seconds, most spans at once."""
     idle_gap = dt.timedelta(minutes=sec.get("idle_gap_minutes", 15))
+    local = lambda t: t.astimezone(cfg.tz)
     days = collections.defaultdict(collections.Counter)
-    spans = []
-    for prompts, turns in claude_sessions(cfg, idle_gap):
+    pieces = []  # (local day, start UTC, end UTC)
+    for prompts, spans in claude_sessions(idle_gap):
         session_days = set()
         for t, w in prompts:
-            days[t.date()]["prompts"] += 1
-            days[t.date()]["prompt_words"] += w
-            session_days.add(t.date())
+            day = local(t).date()
+            days[day]["prompts"] += 1
+            days[day]["prompt_words"] += w
+            session_days.add(day)
         for day in session_days:
             days[day]["sessions"] += 1
-        for s, e in turns:
-            while s.date() < e.date():  # split at midnight
-                midnight = dt.datetime.combine(s.date() + dt.timedelta(days=1), dt.time(), cfg.tz)
-                days[s.date()]["agent_seconds"] += (midnight - s).total_seconds()
-                spans.append((s, midnight))
+        for s, e in spans:
+            while local(s).date() < local(e).date():  # split at local midnight
+                midnight = dt.datetime.combine(local(s).date() + dt.timedelta(days=1), dt.time(), cfg.tz)
+                midnight = midnight.astimezone(dt.timezone.utc)
+                pieces.append((local(s).date(), s, midnight))
                 s = midnight
-            days[s.date()]["agent_seconds"] += (e - s).total_seconds()
-            spans.append((s, e))
+            pieces.append((local(s).date(), s, e))
     points = collections.defaultdict(list)
-    for a, b in spans:
-        points[a.date()] += [(a, 1), (b, -1)]
+    for day, a, b in pieces:
+        days[day]["agent_seconds"] += (b - a).total_seconds()
+        points[day] += [(a, 1), (b, -1)]
     for day, pts in points.items():
         cur = peak = 0
         for _, step in sorted(pts):
@@ -269,31 +332,52 @@ def claude_by_day(cfg, sec):
 DAILY_HEADER = ["date", "dictations", "dictated_words", "dictated_minutes", "dictated_words_to_ai",
                 "claude_prompts", "claude_prompt_words", "claude_sessions", "claude_agent_hours",
                 "claude_peak_parallel"]
+DICTATION_COLS, CLAUDE_COLS = DAILY_HEADER[1:5], DAILY_HEADER[5:]
 
 
-def collect_daily(cfg, today, recount_claude):
+def collect_daily(cfg, today, recount):
+    """daily.csv. A source that is off is left blank; one that can't be read keeps what is stored."""
     dsec, csec = cfg.section("dictation"), cfg.section("claude_code")
     if not dsec and not csec:
         return "daily: skipped (dictation and claude_code are off)"
-    dictation = dictation_by_day(cfg, dsec) if dsec else collections.defaultdict(collections.Counter)
-    claude = claude_by_day(cfg, csec) if csec else collections.defaultdict(collections.Counter)
     path = os.path.join(cfg.out, "daily.csv")
     stored = read_csv(path, "date")
-    # Claude Code deletes transcripts after 30 days, so older days keep the
-    # Claude counts first written for them. superwhisper keeps its history.
+    notes = []
+    dictation = dictation_by_day(cfg, dsec) if dsec else None
+    if dsec and dictation is None:
+        notes.append("superwhisper database not found or unreadable; kept stored dictation")
+    claude = claude_by_day(cfg, csec) if csec else None
+    # Claude Code deletes transcripts after 30 days by default, so older days keep the
+    # Claude counts first written for them, unless asked to recount (--recount-claude
+    # recounts the last 29 days; --recount-claude-all every day, losing what's gone).
     frozen_before = today - dt.timedelta(days=(csec or {}).get("freeze_after_days", 20))
+    if recount == "recent":
+        frozen_before = min(frozen_before, today - dt.timedelta(days=29))
+    elif recount == "all":
+        frozen_before = cfg.start
     rows = []
     for day in days_between(cfg.start, today):
-        d, c = dictation[day], claude[day]
-        row = [day.isoformat(), d["dictations"], d["words"], round(d["seconds"] / 60, 1), d["words_to_ai"],
-               c["prompts"], c["prompt_words"], c["sessions"], round(c["agent_seconds"] / 3600, 2),
-               c["peak_parallel"]]
         old = stored.get(day.isoformat())
-        if day < frozen_before and old and list(old) == DAILY_HEADER and not recount_claude:
-            row[5:] = [old[k] for k in DAILY_HEADER[5:]]
-        rows.append(row)
+        old = old if old and list(old) == DAILY_HEADER else None
+        if dictation is not None:
+            d = dictation[day]
+            dcols = [d["dictations"], d["words"], round(d["seconds"] / 60, 1), d["words_to_ai"]]
+        elif dsec and old:
+            dcols = [old[k] for k in DICTATION_COLS]
+        else:
+            dcols = [""] * len(DICTATION_COLS)
+        if claude is not None:
+            c = claude[day]
+            ccols = [c["prompts"], c["prompt_words"], c["sessions"], round(c["agent_seconds"] / 3600, 2),
+                     c["peak_parallel"]]
+            # Keep stored counts for old days, unless they were blank (source was off then).
+            if day < frozen_before and old and old["claude_prompts"] != "":
+                ccols = [old[k] for k in CLAUDE_COLS]
+        else:
+            ccols = [""] * len(CLAUDE_COLS)
+        rows.append([day.isoformat()] + dcols + ccols)
     write_csv(path, DAILY_HEADER, rows)
-    return f"daily: wrote {len(rows)} days"
+    return f"daily: wrote {len(rows)} days" + ("; " + "; ".join(notes) if notes else "")
 
 
 # ---------- published work ----------
@@ -303,18 +387,40 @@ YT = "{http://www.youtube.com/xml/schemas/2015}"
 
 
 def feed_items(url, tz):
-    """(link, date, title) for each entry of an RSS 2.0 or Atom feed."""
+    """(link, date, title) for each entry of an RSS 2.0 or Atom feed.
+
+    An entry without a usable date or web link is skipped, not fatal.
+    """
     root = ET.fromstring(fetch(url))
     for item in root.iter("item"):  # RSS
-        when = email.utils.parsedate_to_datetime(item.findtext("pubDate")).astimezone(tz)
-        yield item.findtext("link"), when.date().isoformat(), item.findtext("title")
+        try:
+            when = email.utils.parsedate_to_datetime(item.findtext("pubDate"))
+            if when.tzinfo is None:  # "-0000" means UTC with no stated zone
+                when = when.replace(tzinfo=dt.timezone.utc)
+            when = when.astimezone(tz)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        link = web_link(item.findtext("link"))
+        if link:
+            yield link, when.date().isoformat(), one_line(item.findtext("title"))
     for entry in root.iter(f"{ATOM}entry"):  # Atom (YouTube, many blogs)
         vid = entry.findtext(f"{YT}videoId")
         link = f"https://www.youtube.com/watch?v={vid}" if vid else next(
             (l.get("href") for l in entry.findall(f"{ATOM}link") if l.get("rel", "alternate") == "alternate"), None)
         stamp = entry.findtext(f"{ATOM}published") or entry.findtext(f"{ATOM}updated")
-        when = dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(tz)
-        yield link, when.date().isoformat(), entry.findtext(f"{ATOM}title")
+        try:
+            when = dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=dt.timezone.utc)
+            when = when.astimezone(tz)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        link = web_link(link)
+        if link:
+            yield link, when.date().isoformat(), one_line(entry.findtext(f"{ATOM}title"))
+
+
+FEED_TYPES = ("video", "post", "paper")
 
 
 def collect_published(cfg):
@@ -326,12 +432,15 @@ def collect_published(cfg):
     rows = read_csv(path, "url")
     feeds = [{"url": f"https://www.youtube.com/feeds/videos.xml?channel_id={c}", "type": "video"}
              for c in sec.get("youtube_channels", [])] + list(sec.get("feeds", []))
+    for feed in feeds:
+        if feed.get("type", "post") not in FEED_TYPES:
+            raise ValueError(f"feed type must be one of {', '.join(FEED_TYPES)}: {feed}")
     skip = set(sec.get("exclude_links", []))
     problems = []
     for feed in feeds:
         try:
             for link, when, title in feed_items(feed["url"], cfg.tz):
-                if link and link not in skip:
+                if link not in skip:
                     rows[link] = {"date": when, "type": feed.get("type", "post"), "title": title, "url": link}
         except (urllib.error.URLError, OSError, ET.ParseError, ValueError, TypeError) as e:
             problems.append(f"{feed['url']} ({type(e).__name__}: {e})")
@@ -339,7 +448,9 @@ def collect_published(cfg):
     write_csv(path, header, [[r[k] for k in header] for r in ordered])
     # Feeds list only recent items, so a row is kept once seen, even after it drops off.
     note = f"published: wrote {len(ordered)} items"
-    return note + ("; NOT refreshed: " + "; ".join(problems) if problems else "")
+    if problems:
+        raise RuntimeError(note + "; NOT refreshed: " + "; ".join(problems))
+    return note
 
 
 # ---------- commits ----------
@@ -359,6 +470,11 @@ def find_repos(roots, depth, skip):
     return sorted(found)
 
 
+def git(repo, *args):
+    return subprocess.run(GIT_ARGS + ["-C", repo, "--no-pager"] + list(args), capture_output=True,
+                          text=True, timeout=120, check=True, env=GIT_ENV).stdout
+
+
 def collect_commits(cfg):
     sec = cfg.section("commits")
     if not sec:
@@ -366,40 +482,54 @@ def collect_commits(cfg):
     emails = {e.lower() for e in sec.get("author_emails", [])}
     prefixes = tuple(p.lower() for p in sec.get("author_email_prefixes", []))
     path = os.path.join(cfg.out, "commits.csv")
-    header = ["date", "repo", "commits"]
+    header = ["date", "repo", "repo_id", "commits"]
     stored = []
     if os.path.exists(path):
+        read_csv(path, "date")  # refuses a cut file before anything is rewritten
         with open(path, newline="") as fh:
             stored = list(csv.DictReader(line for line in fh if not line.startswith("#")))
-    repos = find_repos(sec.get("roots", ["~"]), sec.get("depth", 3), set(sec.get("skip_dirs", [])))
-    counts, read_ok, problems = collections.Counter(), set(), []
+    repos = find_repos(sec.get("roots", ["~"]), sec.get("depth", 3), ALWAYS_SKIP | set(sec.get("skip_dirs", [])))
+    counts, read_ok, problems, names = collections.Counter(), set(), [], {}
+    seen = set()  # commit hashes, across repos: a second clone doesn't count twice
     for repo in repos:
         name = os.path.relpath(repo, HOME)
         try:
-            out = subprocess.run([GIT, "-C", repo, "log", "--all", f"--since={cfg.start.isoformat()}",
-                                  "--format=%H %aI %ae"], capture_output=True, text=True, timeout=60,
-                                 check=True).stdout
+            # A repo is identified by its first commit, so a renamed or moved repo keeps its history.
+            roots = git(repo, "rev-list", "--max-parents=0", "HEAD").split()
+            if not roots:
+                continue
+            repo_id = sorted(roots)[0][:12]
+            # Every branch and tag, but not stashes (each stash is two commits of its own).
+            # No --since: it filters by committer date and can stop early on skewed clocks.
+            out = git(repo, "log", "--exclude=refs/stash", "--all", "--no-show-signature", "--format=%H %aI %ae")
+        except subprocess.CalledProcessError:
+            continue  # an empty repo, with no commits yet
         except (subprocess.SubprocessError, OSError) as e:
             problems.append(f"{name} ({type(e).__name__})")
             continue
-        read_ok.add(name)
-        seen = set()
+        read_ok.add(repo_id)
+        names[repo_id] = name
         for line in out.splitlines():
-            sha, when, author = line.split(" ", 2)
+            try:
+                sha, when, author = line.split(" ", 2)
+                day = dt.datetime.fromisoformat(when).astimezone(cfg.tz).date()
+            except ValueError:
+                continue  # a malformed commit is skipped, not fatal
             author = author.lower()
-            if sha in seen or not (author in emails or author.startswith(prefixes)):
+            if sha in seen or day < cfg.start or not (author in emails or author.startswith(prefixes)):
                 continue
             seen.add(sha)
-            day = dt.datetime.fromisoformat(when).astimezone(cfg.tz).date()
-            if day >= cfg.start:
-                counts[(day.isoformat(), name)] += 1
-    # A repo that wasn't read this run (moved, deleted, failing) keeps its stored rows.
-    rows = [[r["date"], r["repo"], r["commits"]] for r in stored if r["repo"] not in read_ok]
-    rows += [[d, name, n] for (d, name), n in counts.items()]
+            counts[(day.isoformat(), repo_id)] += 1
+    # A repo that wasn't read this run (moved off this Mac, deleted, failing) keeps its stored rows.
+    rows = [[r["date"], r["repo"], r["repo_id"], r["commits"]] for r in stored
+            if r.get("repo_id") and r["repo_id"] not in read_ok]
+    rows += [[d, names[rid], rid, n] for (d, rid), n in counts.items()]
     rows.sort()
     write_csv(path, header, rows)
     note = f"commits: wrote {len(rows)} day-repo rows from {len(read_ok)} repos"
-    return note + ("; NOT read: " + ", ".join(problems) if problems else "")
+    if problems:
+        raise RuntimeError(note + "; NOT read: " + ", ".join(problems))
+    return note
 
 
 # ---------- RescueTime ----------
@@ -421,6 +551,9 @@ def rescuetime_key(env_file, timeout):
     return None, "RESCUETIME_API_KEY not in .env"
 
 
+RESCUETIME_HISTORY_DAYS = 13  # the free plan's API returns about the last 14 days
+
+
 def collect_rescuetime(cfg, today, force):
     sec = cfg.section("rescuetime")
     if not sec:
@@ -435,36 +568,45 @@ def collect_rescuetime(cfg, today, force):
     env_file = os.path.join(HERE, sec.get("env_file", ".env"))
     key, problem = rescuetime_key(env_file, sec.get("env_read_timeout", 120))
     if problem:
-        return f"rescuetime: NOT updated: {problem}"
+        raise RuntimeError(f"NOT updated: {problem}")
     yesterday = today - dt.timedelta(days=1)
-    # The free plan's API returns only about the last 14 days, so after the first
-    # fetch only recent days are asked for and older days keep their stored hours.
-    begin = today - dt.timedelta(days=sec.get("refetch_days", 10)) if stored else cfg.start
+    # Ask again for recent days (late syncs), and for any gap since the last stored
+    # day, but never further back than the API keeps.
+    if stored:
+        last_stored = dt.date.fromisoformat(max(stored))
+        begin = min(today - dt.timedelta(days=sec.get("refetch_days", 10)), last_stored + dt.timedelta(days=1))
+        begin = max(begin, today - dt.timedelta(days=RESCUETIME_HISTORY_DAYS))
+    else:
+        begin = cfg.start
     query = urllib.parse.urlencode({"format": "json", "perspective": "interval", "resolution_time": "day",
                                     "restrict_kind": "activity", "restrict_begin": begin.isoformat(),
                                     "restrict_end": yesterday.isoformat()})
     try:
-        data = json.loads(fetch(f"{RESCUETIME_API}?{query}", {"Authorization": f"Bearer {key}"}))
+        data = json.loads(fetch(f"{RESCUETIME_API}?{query}", {"Authorization": f"Bearer {key}"},
+                                follow_redirects=False))
         rows = [dict(zip(data["row_headers"], r)) for r in data["rows"]]
     except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
-        return f"rescuetime: NOT updated: API call failed ({type(e).__name__}: {e})"
+        raise RuntimeError(f"NOT updated: API call failed ({type(e).__name__}: {e})")
     if not rows:
         # RescueTime logs all computer time, so an empty answer means a limit or outage.
-        return f"rescuetime: NOT updated: no rows for {begin} to {yesterday}"
+        raise RuntimeError(f"NOT updated: no rows for {begin} to {yesterday}")
     social = set(sec.get("social_categories", []))
-    distracting, social_s = collections.Counter(), collections.Counter()
+    distracting, social_s, answered = collections.Counter(), collections.Counter(), set()
     for r in rows:
         day = r["Date"][:10]
+        answered.add(day)
         if r["Productivity"] < 0:  # RescueTime's distracting (-1) and very distracting (-2)
             distracting[day] += r["Time Spent (seconds)"]
         if r["Category"] in social:
             social_s[day] += r["Time Spent (seconds)"]
-    first = min(stored) if stored else min(r["Date"][:10] for r in rows)
+    first = min(stored) if stored else min(answered)
     out = []
     for day in days_between(dt.date.fromisoformat(first), yesterday):
         iso, old = day.isoformat(), stored.get(day.isoformat())
-        if day < begin and old:
-            out.append([old[k] for k in header])
+        if old and (day < begin or iso not in answered):
+            out.append([old[k] for k in header])  # keep what was stored where the API says nothing
+        elif day < begin:
+            out.append([iso, "", ""])  # a gap the API no longer reaches: unknown, not zero
         else:
             out.append([iso, round(distracting[iso] / 3600, 2), round(social_s[iso] / 3600, 2)])
     write_csv(path, header, out)
@@ -475,20 +617,34 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default=os.path.join(HERE, "config.toml"))
     ap.add_argument("--out", help="write here instead of out_dir (for testing)")
-    ap.add_argument("--recount-claude", action="store_true",
-                    help="recount Claude columns for every day, ignoring stored counts")
+    ap.add_argument("--recount-claude", action="store_const", const="recent", dest="recount",
+                    help="recount the Claude columns for the last 29 days, ignoring stored counts")
+    ap.add_argument("--recount-claude-all", action="store_const", const="all", dest="recount",
+                    help="recount every day; days whose transcripts are deleted drop to zero")
     ap.add_argument("--rescuetime-now", action="store_true", help="fetch RescueTime even if fetched today")
     args = ap.parse_args()
     cfg = Config(args.config)
     if args.out:
-        cfg.out = args.out
-    os.makedirs(cfg.out, exist_ok=True)
+        cfg.out = os.path.expanduser(args.out)
+    if not os.path.isdir(os.path.dirname(os.path.abspath(cfg.out))):
+        # Otherwise an unedited example path would quietly create a folder Drive never syncs.
+        sys.exit(f"The output folder's parent doesn't exist: {os.path.dirname(cfg.out)}. "
+                 "Set out_dir in config.toml to a folder inside your Google Drive.")
+    os.makedirs(cfg.out, exist_ok=True)  # creates only the last folder
     now = dt.datetime.now(cfg.tz)
     print(f"--- run {now:%Y-%m-%d %H:%M}")
-    print(collect_daily(cfg, now.date(), args.recount_claude))
-    print(collect_published(cfg))
-    print(collect_commits(cfg))
-    print(collect_rescuetime(cfg, now.date(), args.rescuetime_now))
+    steps = [("daily", lambda: collect_daily(cfg, now.date(), args.recount)),
+             ("published", lambda: collect_published(cfg)),
+             ("commits", lambda: collect_commits(cfg)),
+             ("rescuetime", lambda: collect_rescuetime(cfg, now.date(), args.rescuetime_now))]
+    failed = False
+    for name, step in steps:
+        try:
+            print(step())
+        except Exception as e:  # logged loudly; the other sources still run
+            failed = True
+            print(f"{name}: FAILED: {type(e).__name__}: {e}")
+    sys.exit(1 if failed else 0)
 
 
 if __name__ == "__main__":

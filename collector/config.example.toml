@@ -17,7 +17,7 @@ ignore_apps = []
 [claude_code]                 # Claude Code transcripts in ~/.claude/projects
 enabled = false
 idle_gap_minutes = 15         # a longer gap inside a turn stops Claude's clock
-freeze_after_days = 20        # Claude Code deletes transcripts after 30 days
+freeze_after_days = 20        # Claude Code deletes unused transcripts after 30 days by default
 
 [published]                   # finished public work, from public feeds
 enabled = false

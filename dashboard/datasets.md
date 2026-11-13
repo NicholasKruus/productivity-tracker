@@ -12,7 +12,7 @@ access, whenever you open the page. Replace the `<…>` values with your own.
 | `rescuetime` | Google Drive | `download_file_content` | `{"fileId": "<id of rescuetime.csv>"}` |
 | `log` | Google Sheets | `get_values` | `{"spreadsheetId": "<log sheet id>", "range": "Log!A:C"}` |
 | `sent_mail` | Gmail | `search_threads` | `{"query": "in:sent newer_than:84d", "pageSize": 50, "view": "THREAD_VIEW_METADATA_ONLY"}` |
-| `slack_sent` | Slack | `slack_search_public_and_private` | `{"filters": "from:<@<your Slack user id>> after:<YYYY-MM-DD, about 12 weeks ago>", "natural_language_query": "", "response_format": "detailed", "include_context": false, "sort": "timestamp", "limit": 20, "max_context_length": 20}` |
+| `slack_sent` | Slack | `slack_search_public_and_private` | `{"filters": "from:<@<your Slack member id>>", "natural_language_query": "", "response_format": "detailed", "include_context": false, "sort": "timestamp", "limit": 20, "max_context_length": 20}` |
 
 Notes:
 
@@ -22,12 +22,16 @@ Notes:
   stays out of the dashboard.
 - `sent_mail` and `slack_sent` page through their results in the page's loader
   and keep only dates and counts. Message text never reaches the page's rows.
-- The Slack connector reaches one workspace.
-- Any source you don't use can be left out: its chart shows "Failed to load" or
-  an empty state, and the rest of the page works.
+  The Slack loader stops once results are older than 12 weeks.
+- Your Slack member id: in Slack, open your profile, then ⋮ (More) → Copy member
+  ID. The Slack connector reaches one workspace.
+- A source you leave out shows "Failed to load" in its chart; the rest of the
+  page works.
 
 ## Making the dashboard
 
-In Claude, ask for a new Data artifact, give it `index.html` as the page and the
-datasets above, and let it check the page runs. The first time you open it,
-Claude asks you to allow each connector the page uses.
+In Claude Code, from this repo's folder, ask: "Create a Data artifact from
+dashboard/index.html with the datasets in dashboard/datasets.md", and give it
+your file and sheet ids. It writes the page and datasets and checks the page
+runs. The first time you open the dashboard, Claude asks you to allow each
+connector the page uses.

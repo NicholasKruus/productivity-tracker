@@ -5,7 +5,7 @@ published, code you committed, conversations in your field, applications you
 sent, emails and Slack messages you wrote, time lost to distracting sites, and
 how much work Claude does for each prompt you give it.
 
-**Demo with made-up numbers:** https://productivity-tracker-demo.vercel.app
+**Demo with made-up numbers:** DEMO_URL
 
 It counts outcomes rather than effort, and it collects everything itself. Trackers
 you have to fill in by hand tend to lapse; this one keeps going without you.
@@ -22,8 +22,8 @@ you have to fill in by hand tend to lapse; this one keeps going without you.
 | Hours Claude worked for you, and Claude's minutes per prompt | Claude Code transcripts on your Mac |
 | Words you dictated vs typed to Claude | superwhisper and Claude Code |
 
-Every part is optional. Leave a source out and its chart says so; the rest of
-the page works.
+Every part is optional. A source you don't connect shows "Failed to load" in its
+chart; a collector source you switch off reads as zero. The rest of the page works.
 
 ## How it fits together
 
@@ -46,11 +46,12 @@ the page works.
 ```
 
 - **The collector** reads what no connector can reach: local databases, local
-  transcripts, local git repos. It is plain Python with no AI and no network
-  access except the public feeds and RescueTime's API. It writes counts, never
-  your text.
-- **The routine** handles the parts that need judgement. It can read, and its
-  only write tool appends rows to one sheet.
+  transcripts, local git repos. It is plain Python with no AI. Its only network
+  calls are to the feeds you list and RescueTime's API. From your own data it
+  writes counts, dates and repo folder names, never text you wrote.
+- **The routine** handles the parts that need judgement. It is set up so that
+  its only write tool appends rows to a sheet (see the routine guide for what
+  that does and doesn't guarantee).
 - **The dashboard** reads everything live, with your own access, each time you
   open it.
 
@@ -60,25 +61,37 @@ You need macOS, Python 3.11 or newer, Google Drive for desktop, and a Claude pla
 with connectors and routines. superwhisper, RescueTime and a meeting-notes app
 such as Granola are optional.
 
-1. **Collector.** Copy `collector/config.example.toml` to `collector/config.toml`,
-   set `out_dir` to a folder inside your Google Drive, and switch on the sources
-   you use. Run it once:
+Check `python3 --version` first. macOS's own `/usr/bin/python3` is 3.9, which
+can't run the collector; install a newer one with `brew install python`. Keep
+the repo outside Desktop, Documents and Downloads: macOS doesn't let background
+jobs read those folders.
+
+1. **Collector.** Copy `collector/config.example.toml` to `collector/config.toml`
+   and switch on the sources you use. For `out_dir`, make a folder inside your
+   Google Drive, select it in Finder, and choose Copy as Pathname (hold Option
+   in its right-click menu). Run it once:
 
    ```
    python3 collector/collector.py
    ```
 
    It prints one line per source. Check the CSV files appeared in Drive.
-2. **Run it hourly.** Edit `collector/com.example.productivity-collector.plist`
-   (your user name and Python path), then:
+2. **Run it hourly.** From the repo folder, fill in the launchd template and
+   load it:
 
    ```
-   cp collector/com.example.productivity-collector.plist ~/Library/LaunchAgents/
+   sed -e "s#/Users/YOU/productivity-tracker#$PWD#" -e "s#/Users/YOU#$HOME#" \
+       -e "s#/opt/homebrew/bin/python3#$(command -v python3)#" \
+       collector/com.example.productivity-collector.plist \
+       > ~/Library/LaunchAgents/com.example.productivity-collector.plist
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.productivity-collector.plist
    ```
 
-   The log is `~/Library/Logs/productivity-collector.log`. If a source needs
-   files in Desktop, Documents or Downloads, macOS may ask you to allow Python.
+   It runs at once and then hourly; read `~/Library/Logs/productivity-collector.log`
+   to check. To change it later, unload it first with
+   `launchctl bootout gui/$(id -u)/com.example.productivity-collector`. If macOS
+   asks to let Python reach a folder, say no unless you know which source needs
+   it: the permission covers every script that Python runs.
 3. **RescueTime (optional).** Create an API key at
    https://www.rescuetime.com/anapi/manage and put `RESCUETIME_API_KEY=...` in
    `collector/.env`. Better: keep it in a secrets manager that mounts the file
@@ -93,16 +106,18 @@ such as Granola are optional.
   public titles and links. No prompt text, dictation, email or message text is
   written anywhere.
 - The routine sees your meeting notes, calendar and email, because judging them
-  is its job. It writes only the date, kind, organization and names to the log,
-  and it can't send, post, browse or run commands. List any notes folders it
-  must never open.
-- The dashboard is private to you unless you share it. Its live sources run with
-  each viewer's own access, so someone you share it with sees their own Gmail
-  and Slack numbers, not yours.
+  is its job. It writes only the date, kind, organization and names to the log.
+  It is set up with no shell, no web access and no send tools. Its one write
+  tool, appending rows to a sheet, accepts any sheet your Google account can
+  edit, so a planted email could try to steer it elsewhere; the routine guide
+  covers how that is limited and how to check.
+- Keep the dashboard to yourself. Its live sources run with each viewer's own
+  access, so anyone you share it with sees a mix of their data and yours.
 
 ## Limits
 
-- Claude Code deletes transcripts after 30 days, so the collector keeps each
+- By default Claude Code deletes transcripts not used for 30 days
+  (`cleanupPeriodDays` in `~/.claude/settings.json`), so the collector keeps each
   day's Claude counts once they are 20 days old. History before you install it
   is only as complete as the transcripts left.
 - RescueTime's free plan returns about 14 days through the API, so its history
