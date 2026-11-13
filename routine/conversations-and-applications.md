@@ -47,19 +47,36 @@ receipt?), which is why it is a Claude routine rather than part of the collector
    Editing a routine in some web dialogs rebuilds its tool lists from defaults,
    so edit it with `/schedule` or the routines API and check the lists after.
 
-## What the tool limits do and don't guarantee
+5. **Pin its sheet with a hook.** See below.
+
+## Pinning the routine to your sheet
 
 The routine reads text other people wrote, and any email or meeting note could
 contain instructions aimed at it. With the limits above it has no shell, no web
 access and no way to send mail or invites. But Google's `append_values` accepts
 any spreadsheet your account can edit, including someone else's sheet shared as
 "anyone with the link can edit". A planted message could try to make the routine
-copy what it read into such a sheet. The prompt pins it to your log sheet and
-tells it to report steering attempts, which makes this unlikely but not
-impossible. Every run's log lists its tool calls: an `append_values` call to any
-other sheet id means something went wrong. If that risk is too much for your
-inbox, run the routine without `append_values`, read its daily report, and add
-rows yourself.
+copy what it read into such a sheet. The prompt tells it not to, but a prompt
+can be talked around. A hook can't.
+
+`routine/guard/` holds a `PreToolUse` hook that refuses any Google Sheets call
+whose `spreadsheetId` isn't your log sheet. It fails closed: if it can't read
+the call, it blocks it. To use it:
+
+1. Make a new **private** GitHub repository and copy the contents of
+   `routine/guard/` into it (keep the `.claude` folder). In
+   `.claude/hooks/sheet_guard.py`, replace `YOUR_LOG_SHEET_ID` with your sheet's
+   id.
+2. Attach that repository to the routine as its **only** repository. Claude
+   Code loads a repository's hooks in a cloud run only when the run has exactly
+   one repository.
+3. Test it once: make a throwaway routine with the same environment, only the
+   Google Sheets connector and the guard repository, and ask it to call
+   `get_values` on a made-up spreadsheet id and then on your log sheet. Its log
+   should show `sheet guard: blocked` for the first and values for the second.
+
+If you update a routine through the routines API, send its whole `job_config`.
+A partial update resets the prompt, the repository and the tool lists.
 
 ## Prompt
 

@@ -49,9 +49,8 @@ chart; a collector source you switch off reads as zero. The rest of the page wor
   transcripts, local git repos. It is plain Python with no AI. Its only network
   calls are to the feeds you list and RescueTime's API. From your own data it
   writes counts, dates and repo folder names, never text you wrote.
-- **The routine** handles the parts that need judgement. It is set up so that
-  its only write tool appends rows to a sheet (see the routine guide for what
-  that does and doesn't guarantee).
+- **The routine** handles the parts that need judgement. Its only write tool
+  appends rows to a sheet, and a hook pins that tool to your log sheet.
 - **The dashboard** reads everything live, with your own access, each time you
   open it.
 
@@ -109,8 +108,9 @@ jobs read those folders.
   is its job. It writes only the date, kind, organization and names to the log.
   It is set up with no shell, no web access and no send tools. Its one write
   tool, appending rows to a sheet, accepts any sheet your Google account can
-  edit, so a planted email could try to steer it elsewhere; the routine guide
-  covers how that is limited and how to check.
+  edit, so a planted email could try to steer it elsewhere. A hook in
+  `routine/guard/` blocks every Sheets call except to your log sheet; the
+  routine guide shows how to attach and test it.
 - Keep the dashboard to yourself. Its live sources run with each viewer's own
   access, so anyone you share it with sees a mix of their data and yours.
 
